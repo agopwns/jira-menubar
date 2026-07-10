@@ -2,8 +2,8 @@
 
 A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin that turns your macOS menu bar into a personal Jira control tower. Single file, zero dependencies (Node.js built-ins only).
 
-| rounded                                       | pill (filled)                                  | ticket                                      | bubble                                      |
-| --------------------------------------------- | ---------------------------------------------- | ------------------------------------------- | ------------------------------------------- |
+| rounded                                | pill (filled)                           | ticket                               | bubble                               |
+| -------------------------------------- | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | ![rounded](docs/img/shape-rounded.png) | ![pill](docs/img/shape-pill-filled.png) | ![ticket](docs/img/shape-ticket.png) | ![bubble](docs/img/shape-bubble.png) |
 
 ## Features
@@ -11,7 +11,8 @@ A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin that turns your macOS 
 - **Menu bar counter** — `J34·2!` = 34 open tickets, 2 needing immediate action. Rendered as a hand-drawn pixel-font PNG with 5 box shapes (rounded / pill / square / ticket / speech bubble), outline or filled, fully color-configurable — or plain text mode.
 - **Dropdown sections** — action-needed, in-progress, planned, moved-by-others (activity you haven't seen), newly created, everything else, plus unlimited custom JQL sections.
 - **Native notifications** — new urgent tickets, new comments (with **@mention detection**), weekly stale-ticket report, and a weekday morning briefing. All diff-based: no notification storms.
-- **Quick actions** — open ticket, mark activity as seen, and status transitions with a confirm step (transition IDs resolved live per ticket).
+- **Quick actions** — open ticket, mark activity as seen, snooze moved activity for 1/3/7 days, assign a ticket to yourself, add a comment from a native dialog, and run status transitions with a confirm step (transition IDs resolved live per ticket).
+- **Sprint footer** — optionally shows the active sprint, days remaining, and your incomplete/total sprint ticket count.
 - **Done stats** — today / this week completion counts in the footer.
 - **In-dropdown settings** — 25+ setting groups (colors per text region, sizes, box shape/stroke/padding, toggles) editable by clicking, no config editing needed.
 - **Resilient** — per-section error isolation, cached last-good dropdown when offline, silent fallbacks everywhere. The widget never dies.
@@ -36,22 +37,27 @@ Manual install: copy `jira-tickets.5m.js` into your SwiftBar plugin folder, `chm
 
 `~/.config/jira-menubar/config.json` (see [config.example.json](config.example.json)):
 
-| Key                          | Description                                                                                                                                |
-| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| `baseUrl`                    | `https://your-site.atlassian.net`                                                                                                          |
-| `email`                      | Atlassian account email                                                                                                                    |
-| `apiToken`                   | API token (file is chmod 600)                                                                                                              |
-| `myAccountId`                | Your accountId — `curl -su email:token '<baseUrl>/rest/api/3/myself' \| jq -r .accountId`                                                  |
-| `projects`                   | Project keys for the "newly created" section, e.g. `["ABC", "XYZ"]`                                                                        |
-| `newTicketDays`              | Window for newly created tickets (default 3)                                                                                               |
-| `notifications` / `briefing` | Master toggles (default true)                                                                                                              |
-| `statusBuckets`              | Status names per bucket: `{ "urgent": [...], "inProgress": [...], "planned": [...] }`. Defaults are Korean workflow names — set yours here |
-| `transitionTargets`          | Quick-transition menu: `[{ "label": "✅ Done", "status": "Done" }]`. `[]` disables                                                         |
-| `sectionTitles`              | Override built-in section titles by id (`urgent`, `inProgress`, `planned`, `movedByOthers`, `newTickets`, `otherMine`)                     |
-| `customSections`             | Extra JQL sections: `[{ "title": "...", "jql": "...", "maxResults": 15 }]` (max 5)                                                         |
-| `style`                      | Everything visual — all of it also editable from the in-dropdown ⚙️ settings menu                                                          |
+| Key                          | Description                                                                                                                                                                     |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `baseUrl`                    | `https://your-site.atlassian.net`                                                                                                                                               |
+| `email`                      | Atlassian account email                                                                                                                                                         |
+| `apiToken`                   | API token (file is chmod 600)                                                                                                                                                   |
+| `myAccountId`                | Your accountId — `curl -su email:token '<baseUrl>/rest/api/3/myself' \| jq -r .accountId`                                                                                       |
+| `boardId`                    | Jira board ID for the active-sprint footer. Empty by default (disabled); use the numeric ID from the board URL (`/boards/<id>`, or the `rapidView` parameter on classic boards) |
+| `projects`                   | Project keys for the "newly created" section, e.g. `["ABC", "XYZ"]`                                                                                                             |
+| `newTicketDays`              | Window for newly created tickets (default 3)                                                                                                                                    |
+| `notifications` / `briefing` | Master toggles (default true)                                                                                                                                                   |
+| `statusBuckets`              | Status names per bucket: `{ "urgent": [...], "inProgress": [...], "planned": [...] }`. Defaults are Korean workflow names — set yours here                                      |
+| `transitionTargets`          | Quick-transition menu: `[{ "label": "✅ Done", "status": "Done" }]`. `[]` disables                                                                                              |
+| `sectionTitles`              | Override built-in section titles by id (`urgent`, `inProgress`, `planned`, `movedByOthers`, `newTickets`, `otherMine`)                                                          |
+| `customSections`             | Extra JQL sections: `[{ "title": "...", "jql": "...", "maxResults": 15 }]` (max 5)                                                                                              |
+| `style`                      | Everything visual — all of it also editable from the in-dropdown ⚙️ settings menu                                                                                               |
 
 > **Team-managed projects warning**: if two projects share a status _name_, JQL name matching silently hits only one of them. Use status IDs in custom JQL (`status = 10003`), and list all per-project names in `statusBuckets` (bucketing matches names client-side, which is safe).
+
+Set `boardId` to a board's numeric ID to enable a footer such as `🏃 Sprint 12 · D-4 · 내 티켓 3/5`. The plugin reads the active sprint from Jira's board API and classifies completed tickets by `statusCategory`; if either sprint request fails, only this optional footer is omitted.
+
+Moved-by-others tickets can be snoozed for 1, 3, or 7 days. A ticket reappears immediately if it receives activity after it was snoozed. Newly opened and moved tickets offer **🙋 나에게 할당** when `myAccountId` is configured and you are not already the assignee. Your ticket buckets and moved tickets offer **💬 코멘트 달기**, which opens a native macOS text dialog.
 
 ## CLI modes
 
@@ -62,6 +68,9 @@ jira-tickets.5m.js                      # render (what SwiftBar runs)
 jira-tickets.5m.js set <path> <value>   # change an allowlisted config value
 jira-tickets.5m.js seen <KEY> <iso>     # mark ticket activity as seen
 jira-tickets.5m.js seen-all             # mark all moved-by-others as seen
+jira-tickets.5m.js snooze <KEY> <days>  # snooze moved activity
+jira-tickets.5m.js assign <KEY>          # assign the ticket to myAccountId
+jira-tickets.5m.js comment <KEY>         # prompt for and add a comment
 jira-tickets.5m.js transition <KEY> <status>  # transition a ticket
 jira-tickets.5m.js stale-report         # send the stale report now
 jira-tickets.5m.js briefing             # send the morning briefing now

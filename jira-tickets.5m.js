@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/node
 // <xbar.title>Jira Tickets</xbar.title>
-// <xbar.version>v2.0.0</xbar.version>
+// <xbar.version>v2.1.0</xbar.version>
 // <xbar.author>Jun</xbar.author>
 // <xbar.desc>Jira 티켓 상태를 macOS 메뉴바에서 확인</xbar.desc>
 // <xbar.abouturl>https://github.com/agopwns/jira-menubar</xbar.abouturl>
@@ -13,7 +13,7 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { execFileSync } = require("node:child_process");
 
-const version = "v2.0.0";
+const version = "v2.1.0";
 const requestTimeoutMs = 10000;
 const fields =
   "summary,status,priority,issuetype,updated,created,assignee,duedate,parent";
@@ -281,6 +281,37 @@ function runSeenAll() {
   }
 }
 
+function runSnoozeSetter() {
+  if (process.argv.length !== 5) {
+    return 1;
+  }
+
+  const key = String(process.argv[3] || "").trim();
+  const days = Number(process.argv[4]);
+
+  if (!key || !Number.isFinite(days) || days <= 0) {
+    return 1;
+  }
+
+  try {
+    const now = new Date();
+    const until = new Date(
+      now.getTime() + days * 24 * 60 * 60 * 1000,
+    ).toISOString();
+    const seen = readSeenStore();
+
+    seen[key] = {
+      until,
+      snoozedAt: now.toISOString(),
+    };
+    pruneSeenStore(seen, now.getTime());
+    writeSeenStore(seen);
+    return 0;
+  } catch {
+    return 1;
+  }
+}
+
 async function runTransition() {
   if (process.argv.length !== 5) {
     return 1;
@@ -323,6 +354,88 @@ async function runTransition() {
   } catch (error) {
     sendNotification(`⚠ 전이 실패: ${key}`, shortMessage(error));
     return 0;
+  }
+}
+
+async function runAssign() {
+  if (process.argv.length !== 4) {
+    return 1;
+  }
+
+  const key = String(process.argv[3] || "").trim();
+  if (!key) {
+    return 1;
+  }
+
+  const configResult = readConfig();
+  if (configResult.setup) {
+    return 1;
+  }
+
+  const { config } = configResult;
+  if (
+    !config.baseUrl ||
+    !config.email ||
+    !config.apiToken ||
+    !config.myAccountId
+  ) {
+    return 1;
+  }
+
+  try {
+    await putIssueAssignee(config, key, config.myAccountId);
+    sendNotification(`🙋 ${key} 나에게 할당`, "담당자를 변경했습니다");
+    return 0;
+  } catch (error) {
+    sendNotification(`⚠ 할당 실패: ${key}`, shortMessage(error));
+    return 0;
+  }
+}
+
+async function runComment() {
+  if (process.argv.length !== 4) {
+    return 1;
+  }
+
+  const key = String(process.argv[3] || "").trim();
+  if (!key) {
+    return 1;
+  }
+
+  const configResult = readConfig();
+  if (configResult.setup) {
+    return 1;
+  }
+
+  const { config } = configResult;
+  if (!config.baseUrl || !config.email || !config.apiToken) {
+    return 1;
+  }
+
+  const comment = promptForComment(key);
+  if (comment === null || !comment.trim()) {
+    return 0;
+  }
+
+  try {
+    await postIssueComment(config, key, comment);
+    sendNotification(`💬 ${key} 코멘트 등록`, "코멘트를 등록했습니다");
+    return 0;
+  } catch (error) {
+    sendNotification(`⚠ 코멘트 실패: ${key}`, shortMessage(error));
+    return 0;
+  }
+}
+
+function promptForComment(key) {
+  try {
+    return execFileSync(
+      "/usr/bin/osascript",
+      ["-e", buildCommentDialogScript(key)],
+      { encoding: "utf8" },
+    ).replace(/\r?\n$/, "");
+  } catch {
+    return null;
   }
 }
 
@@ -380,6 +493,10 @@ if (process.argv[2] === "seen-all") {
   process.exit(runSeenAll());
 }
 
+if (process.argv[2] === "snooze") {
+  process.exit(runSnoozeSetter());
+}
+
 function readConfig() {
   const configPath = getConfigPath();
 
@@ -421,6 +538,7 @@ function normalizeConfig(config) {
     email: String(config.email || ""),
     apiToken: String(config.apiToken || ""),
     myAccountId: String(config.myAccountId || ""),
+    boardId: String(config.boardId || "").trim(),
     projects: Array.isArray(config.projects)
       ? config.projects.map((project) => String(project)).filter(Boolean)
       : [],
@@ -447,9 +565,7 @@ function normalizeStatusBuckets(statusBuckets) {
       if (
         !Array.isArray(value[id]) ||
         value[id].length === 0 ||
-        value[id].some(
-          (name) => typeof name !== "string" || !name.trim(),
-        )
+        value[id].some((name) => typeof name !== "string" || !name.trim())
       ) {
         return [id, [...fallback]];
       }
@@ -474,8 +590,7 @@ function normalizeTransitionTargets(transitionTargets) {
       continue;
     }
 
-    const label =
-      typeof target.label === "string" ? target.label.trim() : "";
+    const label = typeof target.label === "string" ? target.label.trim() : "";
     const status =
       typeof target.status === "string" ? target.status.trim() : "";
 
@@ -695,12 +810,33 @@ function writeJsonObject(filePath, value) {
 
 function readSeenStore() {
   const seen = readJsonObject(getSeenPath(), {});
-  return Object.fromEntries(
-    Object.entries(seen).filter(
-      ([key, updatedIso]) =>
-        key && typeof updatedIso === "string" && updatedIso.trim(),
-    ),
-  );
+  const normalized = {};
+
+  for (const [key, entry] of Object.entries(seen)) {
+    if (!key) {
+      continue;
+    }
+
+    if (typeof entry === "string" && entry.trim()) {
+      normalized[key] = entry;
+      continue;
+    }
+
+    if (!isPlainObject(entry)) {
+      continue;
+    }
+
+    const until = String(entry.until || "").trim();
+    const snoozedAt = String(entry.snoozedAt || "").trim();
+    if (
+      Number.isFinite(Date.parse(until)) &&
+      Number.isFinite(Date.parse(snoozedAt))
+    ) {
+      normalized[key] = { until, snoozedAt };
+    }
+  }
+
+  return normalized;
 }
 
 function writeSeenStore(seen) {
@@ -709,22 +845,44 @@ function writeSeenStore(seen) {
 
 function mergeSeenEntry(seen, key, updatedIso) {
   const existing = seen[key];
+  const existingIso = typeof existing === "string" ? existing : "";
 
-  if (!existing || compareIsoTimes(updatedIso, existing) > 0) {
+  if (!existingIso || compareIsoTimes(updatedIso, existingIso) > 0) {
     seen[key] = updatedIso;
   }
 }
 
-function pruneSeenStore(seen) {
-  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+function pruneSeenStore(seen, now = Date.now()) {
+  const nowTime = now instanceof Date ? now.getTime() : Number(now);
+  const safeNow = Number.isFinite(nowTime) ? nowTime : Date.now();
+  const cutoff = safeNow - 30 * 24 * 60 * 60 * 1000;
+  let pruned = 0;
 
-  for (const [key, updatedIso] of Object.entries(seen)) {
-    const time = Date.parse(updatedIso);
+  for (const [key, entry] of Object.entries(seen)) {
+    if (isPlainObject(entry)) {
+      const until = Date.parse(entry.until || "");
+      const snoozedAt = Date.parse(entry.snoozedAt || "");
+
+      if (
+        !Number.isFinite(until) ||
+        !Number.isFinite(snoozedAt) ||
+        until <= safeNow
+      ) {
+        delete seen[key];
+        pruned++;
+      }
+      continue;
+    }
+
+    const time = Date.parse(entry);
 
     if (!Number.isFinite(time) || time < cutoff) {
       delete seen[key];
+      pruned++;
     }
   }
+
+  return pruned;
 }
 
 function getStyle(config) {
@@ -781,22 +939,14 @@ function buildSectionDefs(config) {
     },
     {
       id: "movedByOthers",
-      title: sectionTitle(
-        config,
-        "movedByOthers",
-        "🔔 남이 움직인 티켓 (7d)",
-      ),
+      title: sectionTitle(config, "movedByOthers", "🔔 남이 움직인 티켓 (7d)"),
       jql: `assignee = currentUser() AND statusCategory != Done AND updated >= -7d AND NOT issue IN updatedBy("${accountId}", "-7d") ORDER BY updated DESC`,
       maxResults: 15,
       showStatus: true,
     },
     {
       id: "newTickets",
-      title: sectionTitle(
-        config,
-        "newTickets",
-        `🆕 새로 열린 티켓 (${days}d)`,
-      ),
+      title: sectionTitle(config, "newTickets", `🆕 새로 열린 티켓 (${days}d)`),
       jql: `${projectJql} AND created >= -${days}d ORDER BY created DESC`,
       maxResults: 15,
       showStatus: true,
@@ -838,7 +988,7 @@ function customSectionTitle(title) {
   return firstCodePoint > 0x2000 ? title : `🔖 ${title}`;
 }
 
-function buildQueryDefs(sections) {
+function buildQueryDefs(sections, config = {}) {
   const sectionMap = new Map(sections.map((section) => [section.id, section]));
   const customQueries = sections
     .filter((section) => section.custom)
@@ -886,6 +1036,19 @@ function buildQueryDefs(sections) {
       jql: "assignee = currentUser() AND statusCategory = Done AND updated >= -7d",
       maxResults: 50,
     },
+    ...(config.boardId
+      ? [
+          {
+            id: "sprintMine",
+            section: {
+              id: "sprintMine",
+              title: "활성 스프린트",
+            },
+            jql: `${buildProjectJql(config.projects)} AND sprint in openSprints() AND assignee = currentUser()`,
+            maxResults: 100,
+          },
+        ]
+      : []),
     ...customQueries,
   ];
 }
@@ -982,6 +1145,54 @@ async function fetchIssueComments(config, key) {
   return Array.isArray(data.comments) ? data.comments : [];
 }
 
+async function fetchActiveSprint(config) {
+  const response = await fetchResponse(
+    buildActiveSprintUrl(config.baseUrl, config.boardId),
+    jiraAuthHeaders(config),
+  );
+
+  if (!response.ok) {
+    throw new Error(await httpErrorMessage(response));
+  }
+
+  let data;
+  try {
+    data = await response.json();
+  } catch (error) {
+    throw new Error(`응답 JSON 파싱 실패: ${shortMessage(error)}`);
+  }
+
+  const sprint = Array.isArray(data.values) ? data.values[0] : null;
+  const name = typeof sprint?.name === "string" ? sprint.name.trim() : "";
+  if (!name) {
+    return null;
+  }
+
+  return {
+    name,
+    endDate:
+      typeof sprint.endDate === "string" &&
+      Number.isFinite(Date.parse(sprint.endDate))
+        ? sprint.endDate
+        : "",
+  };
+}
+
+async function fetchActiveSprintResult(config) {
+  if (!config.boardId) {
+    return null;
+  }
+
+  try {
+    return {
+      ok: true,
+      sprint: await fetchActiveSprint(config),
+    };
+  } catch (error) {
+    return { ok: false, error };
+  }
+}
+
 async function postIssueTransition(config, key, transitionId) {
   const response = await fetchResponse(
     buildIssueTransitionsUrl(config.baseUrl, key),
@@ -993,6 +1204,51 @@ async function postIssueTransition(config, key, transitionId) {
       body: JSON.stringify({
         transition: {
           id: String(transitionId || ""),
+        },
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await httpErrorMessage(response));
+  }
+}
+
+async function putIssueAssignee(config, key, accountId) {
+  const response = await fetchResponse(
+    buildIssueAssigneeUrl(config.baseUrl, key),
+    jiraAuthHeaders(config, {
+      "Content-Type": "application/json",
+    }),
+    {
+      method: "PUT",
+      body: JSON.stringify({ accountId }),
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(await httpErrorMessage(response));
+  }
+}
+
+async function postIssueComment(config, key, text) {
+  const response = await fetchResponse(
+    buildIssueCommentUrl(config.baseUrl, key),
+    jiraAuthHeaders(config, {
+      "Content-Type": "application/json",
+    }),
+    {
+      method: "POST",
+      body: JSON.stringify({
+        body: {
+          type: "doc",
+          version: 1,
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text }],
+            },
+          ],
         },
       }),
     },
@@ -1020,6 +1276,29 @@ function buildIssueTransitionsUrl(baseUrl, key) {
     `/rest/api/3/issue/${encodeURIComponent(key)}/transitions`,
     `${baseUrl}/`,
   );
+}
+
+function buildIssueAssigneeUrl(baseUrl, key) {
+  return new URL(
+    `/rest/api/3/issue/${encodeURIComponent(key)}/assignee`,
+    `${baseUrl}/`,
+  );
+}
+
+function buildIssueCommentUrl(baseUrl, key) {
+  return new URL(
+    `/rest/api/3/issue/${encodeURIComponent(key)}/comment`,
+    `${baseUrl}/`,
+  );
+}
+
+function buildActiveSprintUrl(baseUrl, boardId) {
+  const url = new URL(
+    `/rest/agile/1.0/board/${encodeURIComponent(boardId)}/sprint`,
+    `${baseUrl}/`,
+  );
+  url.searchParams.set("state", "active");
+  return url;
 }
 
 function buildIssueCommentsUrl(baseUrl, key) {
@@ -1148,12 +1427,37 @@ function filterSeenMovedIssues(result, seen) {
   };
 }
 
-function isSeenMovedIssue(seen, issue) {
+function isSeenMovedIssue(seen, issue, now = Date.now()) {
   const key = issue.key || "";
   const updatedIso = issue.fields?.updated || "";
-  const seenIso = seen[key];
+  const entry = seen[key];
 
-  return !!seenIso && compareIsoTimes(seenIso, updatedIso) >= 0;
+  if (typeof entry === "string") {
+    return !!entry && compareIsoTimes(entry, updatedIso) >= 0;
+  }
+
+  if (!isPlainObject(entry)) {
+    return false;
+  }
+
+  const until = Date.parse(entry.until || "");
+  const snoozedAt = Date.parse(entry.snoozedAt || "");
+  const updated = Date.parse(updatedIso);
+  const nowTime = now instanceof Date ? now.getTime() : Number(now);
+
+  if (
+    !Number.isFinite(until) ||
+    !Number.isFinite(snoozedAt) ||
+    !Number.isFinite(nowTime)
+  ) {
+    return false;
+  }
+
+  if (Number.isFinite(updated) && updated > snoozedAt) {
+    return false;
+  }
+
+  return nowTime < until;
 }
 
 async function detectRecentComments(
@@ -2226,7 +2530,9 @@ function renderNormal(config, sectionResults, options = {}) {
     dropdown.push("---");
   }
 
-  dropdown.push(...renderFooter(config, options.doneStats));
+  dropdown.push(
+    ...renderFooter(config, options.doneStats, options.sprintStats),
+  );
 
   const menuBarLines = [renderMenuBarLine(menuTitle, style)];
   if (style.menubarRotate && urgentCount >= 1) {
@@ -2303,6 +2609,21 @@ function renderSection(config, result, options = {}) {
       if (section.id === "movedByOthers") {
         lines.push(...renderMovedIssueChildren(config, issue));
       }
+
+      if (section.id === "newTickets") {
+        const assignChildren = renderAssignIssueChild(config, issue);
+        // 서브메뉴가 생기면 부모 라인의 href 클릭이 막히므로 열기 항목을 함께 제공
+        if (assignChildren.length > 0) {
+          lines.push(
+            lineWithParams("-- 티켓 열기", [
+              `href=${issueBrowseUrl(config, issue.key || "")}`,
+              sizeParam(style.sizes.footer),
+              colorParam(style.colors.dim),
+            ]),
+            ...assignChildren,
+          );
+        }
+      }
     }
   }
 
@@ -2343,6 +2664,7 @@ function renderMineIssueTransitionChildren(config, issue) {
       sizeParam(style.sizes.footer),
       colorParam(style.colors.dim),
     ]),
+    ...renderCommentIssueChild(config, issue),
   ];
 
   for (const target of config.transitionTargets) {
@@ -2374,13 +2696,14 @@ function renderMovedIssueChildren(config, issue) {
   const scriptPath = path.resolve(process.argv[1] || __filename);
   const key = issue.key || "";
   const updatedIso = issue.fields?.updated || "";
-
-  return [
+  const lines = [
     lineWithParams("-- 티켓 열기", [
       `href=${issueBrowseUrl(config, key)}`,
       sizeParam(style.sizes.footer),
       colorParam(style.colors.dim),
     ]),
+    ...renderAssignIssueChild(config, issue),
+    ...renderCommentIssueChild(config, issue),
     lineWithParams("-- ✅ 확인함", [
       `bash=${scriptPath}`,
       "param1=seen",
@@ -2390,6 +2713,51 @@ function renderMovedIssueChildren(config, issue) {
       "refresh=true",
     ]),
   ];
+
+  for (const days of [1, 3, 7]) {
+    lines.push(
+      lineWithParams(`-- ⏰ ${days}일 스누즈`, [
+        `bash=${scriptPath}`,
+        "param1=snooze",
+        `param2=${key}`,
+        `param3=${days}`,
+        "terminal=false",
+        "refresh=true",
+      ]),
+    );
+  }
+
+  return lines;
+}
+
+function renderAssignIssueChild(config, issue) {
+  const myAccountId = config.myAccountId || "";
+  const assigneeAccountId = issue.fields?.assignee?.accountId || "";
+
+  if (!myAccountId || assigneeAccountId === myAccountId) {
+    return [];
+  }
+
+  return [renderIssueCommandChild(config, issue, "🙋 나에게 할당", "assign")];
+}
+
+function renderCommentIssueChild(config, issue) {
+  return [renderIssueCommandChild(config, issue, "💬 코멘트 달기", "comment")];
+}
+
+function renderIssueCommandChild(config, issue, label, command) {
+  const style = getStyle(config);
+  const scriptPath = path.resolve(process.argv[1] || __filename);
+
+  return lineWithParams(`-- ${label}`, [
+    `bash=${scriptPath}`,
+    `param1=${command}`,
+    `param2=${issue.key || ""}`,
+    "terminal=false",
+    "refresh=true",
+    sizeParam(style.sizes.footer),
+    colorParam(style.colors.dim),
+  ]);
 }
 
 function renderParentGroupedIssues(config, section, issues) {
@@ -2594,13 +2962,21 @@ function resultIssueCount(result) {
     : result.issues.length;
 }
 
-function renderFooter(config, doneStats) {
+function renderFooter(config, doneStats, sprintStats) {
   const style = getStyle(config);
 
   return [
     `🌐 Jira 열기 | href=${config.baseUrl}/jira/your-work`,
     "🔄 새로고침 | refresh=true",
     ...renderSettingsMenu(config),
+    ...(sprintStats
+      ? [
+          lineWithParams(renderSprintFooterText(sprintStats), [
+            sizeParam(style.sizes.footer),
+            colorParam(style.colors.dim),
+          ]),
+        ]
+      : []),
     ...(doneStats?.available
       ? [
           lineWithParams(
@@ -2614,6 +2990,19 @@ function renderFooter(config, doneStats) {
       colorParam(style.colors.dim),
     ]),
   ];
+}
+
+function renderSprintFooterText(sprintStats) {
+  const parts = [`🏃 ${escapeText(sprintStats.name)}`];
+
+  if (Number.isFinite(sprintStats.daysRemaining)) {
+    parts.push(`D-${sprintStats.daysRemaining}`);
+  }
+
+  parts.push(
+    `내 티켓 ${sprintStats.incompleteCount}/${sprintStats.totalCount}`,
+  );
+  return parts.join(" · ");
 }
 
 function renderSettingsMenu(config) {
@@ -3281,6 +3670,40 @@ function computeDoneStats(doneResult, now = new Date()) {
   };
 }
 
+function computeSprintStats(activeSprintResult, sprintIssueResult, now) {
+  if (
+    !activeSprintResult?.ok ||
+    !activeSprintResult.sprint ||
+    !sprintIssueResult?.ok
+  ) {
+    return null;
+  }
+
+  const sprint = activeSprintResult.sprint;
+  const issues = sprintIssueResult.issues || [];
+  const totalCount = issues.length;
+  const incompleteCount = issues.filter(
+    (issue) => !isDoneStatusCategory(issue.fields?.status?.statusCategory),
+  ).length;
+  const endTime = Date.parse(sprint.endDate || "");
+  const nowTime = now instanceof Date ? now.getTime() : Date.now();
+
+  return {
+    name: sprint.name,
+    daysRemaining: Number.isFinite(endTime)
+      ? Math.max(0, Math.ceil((endTime - nowTime) / (24 * 60 * 60 * 1000)))
+      : null,
+    incompleteCount,
+    totalCount,
+  };
+}
+
+function isDoneStatusCategory(statusCategory) {
+  return (
+    statusCategory?.key === "done" || String(statusCategory?.id || "") === "3"
+  );
+}
+
 function staleReportNotification(issues) {
   const keys = issues
     .slice(0, 4)
@@ -3382,6 +3805,14 @@ function buildNotificationScript(title, body) {
   return `display notification ${appleScriptQuote(body)} with title ${appleScriptQuote(title)}`;
 }
 
+function buildCommentDialogScript(key) {
+  return `text returned of (display dialog ${appleScriptQuote(
+    `${key}에 코멘트:`,
+  )} default answer ${appleScriptQuote("")} with title ${appleScriptQuote(
+    "Jira 코멘트",
+  )})`;
+}
+
 function appleScriptQuote(value) {
   return `"${String(value || "")
     .replace(/\\/g, "\\\\")
@@ -3428,9 +3859,17 @@ async function main() {
 
   const { config } = configResult;
   const seen = readSeenStore();
+  try {
+    if (pruneSeenStore(seen) > 0) {
+      writeSeenStore(seen);
+    }
+  } catch {}
   const sections = buildSectionDefs(config);
-  const queries = buildQueryDefs(sections);
-  const queryResults = await fetchQueryResults(config, queries);
+  const queries = buildQueryDefs(sections, config);
+  const [queryResults, activeSprintResult] = await Promise.all([
+    fetchQueryResults(config, queries),
+    fetchActiveSprintResult(config),
+  ]);
   const sectionResults = buildSectionResults(
     sections,
     queryResults,
@@ -3440,7 +3879,7 @@ async function main() {
   const allFailed = queryResults
     .filter(
       (result) =>
-        result.query.id !== "stale" && result.query.id !== "doneRecent",
+        !["stale", "doneRecent", "sprintMine"].includes(result.query.id),
     )
     .every((result) => !result.ok);
   const now = new Date();
@@ -3457,10 +3896,16 @@ async function main() {
     queryResults.find((result) => result.query.id === "doneRecent"),
     now,
   );
+  const sprintStats = computeSprintStats(
+    activeSprintResult,
+    queryResults.find((result) => result.query.id === "sprintMine"),
+    now,
+  );
   const output = allFailed
     ? renderAllFailed(config, sectionResults)
     : renderNormal(config, sectionResults, {
         doneStats,
+        sprintStats,
         newCommentKeys: commentDetection.newCommentKeys,
         now,
       });
@@ -3512,7 +3957,7 @@ async function runStaleReport() {
   try {
     const { config } = configResult;
     const sections = buildSectionDefs(config);
-    const staleQuery = buildQueryDefs(sections).find(
+    const staleQuery = buildQueryDefs(sections, config).find(
       (query) => query.id === "stale",
     );
     const { issues } = await fetchQuery(config, staleQuery);
@@ -3539,7 +3984,7 @@ async function runBriefing() {
   try {
     const { config } = configResult;
     const sections = buildSectionDefs(config);
-    const queries = buildQueryDefs(sections).filter((query) =>
+    const queries = buildQueryDefs(sections, config).filter((query) =>
       ["mine", "movedByOthers", "doneRecent"].includes(query.id),
     );
     const queryResults = await fetchQueryResults(config, queries);
@@ -3569,6 +4014,26 @@ if (process.argv[2] === "transition") {
     .catch((error) => {
       const key = String(process.argv[3] || "").trim() || "?";
       sendNotification(`⚠ 전이 실패: ${key}`, shortMessage(error));
+      process.exitCode = 0;
+    });
+} else if (process.argv[2] === "assign") {
+  runAssign()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      const key = String(process.argv[3] || "").trim() || "?";
+      sendNotification(`⚠ 할당 실패: ${key}`, shortMessage(error));
+      process.exitCode = 0;
+    });
+} else if (process.argv[2] === "comment") {
+  runComment()
+    .then((code) => {
+      process.exitCode = code;
+    })
+    .catch((error) => {
+      const key = String(process.argv[3] || "").trim() || "?";
+      sendNotification(`⚠ 코멘트 실패: ${key}`, shortMessage(error));
       process.exitCode = 0;
     });
 } else if (process.argv[2] === "stale-report") {

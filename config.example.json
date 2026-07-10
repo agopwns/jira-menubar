@@ -3,6 +3,7 @@
   "email": "you@example.com",
   "apiToken": "",
   "myAccountId": "",
+  "boardId": "",
   "projects": ["ABC"],
   "newTicketDays": 3,
   "notifications": true,

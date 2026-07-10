@@ -6,6 +6,8 @@ A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin that turns your macOS 
 | -------------------------------------- | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | ![rounded](docs/img/shape-rounded.png) | ![pill](docs/img/shape-pill-filled.png) | ![ticket](docs/img/shape-ticket.png) | ![bubble](docs/img/shape-bubble.png) |
 
+The screenshot shapes can be combined with four one-click theme presets at the top of **⚙️ 위젯 설정**: **미니멀** (square, system colors), **터미널** (filled square, restrained green, Menlo), **티켓** (amber ticket outline), and **버블** (filled blue/cyan speech bubble). After applying a preset, every individual style setting remains editable for fine-tuning.
+
 ## Features
 
 - **Menu bar counter** — `J34·2!` = 34 open tickets, 2 needing immediate action. Rendered as a hand-drawn pixel-font PNG with 5 box shapes (rounded / pill / square / ticket / speech bubble), outline or filled, fully color-configurable — or plain text mode.
@@ -14,6 +16,8 @@ A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin that turns your macOS 
 - **Quick actions** — open ticket, mark activity as seen, snooze moved activity for 1/3/7 days, assign a ticket to yourself, add a comment from a native dialog, and run status transitions with a confirm step (transition IDs resolved live per ticket).
 - **Sprint footer** — optionally shows the active sprint, days remaining, and your incomplete/total sprint ticket count.
 - **Done stats** — today / this week completion counts in the footer.
+- **Update checker** — checks GitHub at most once every 24 hours and quietly adds an update link to the footer when a newer semantic version is available. It is enabled by default and can be toggled in settings.
+- **Theme presets** — switch the complete shape, fill, ANSI, font, and color bundle in one click, then fine-tune with the existing style controls.
 - **In-dropdown settings** — 25+ setting groups (colors per text region, sizes, box shape/stroke/padding, toggles) editable by clicking, no config editing needed.
 - **Resilient** — per-section error isolation, cached last-good dropdown when offline, silent fallbacks everywhere. The widget never dies.
 
@@ -47,6 +51,7 @@ Manual install: copy `jira-tickets.5m.js` into your SwiftBar plugin folder, `chm
 | `projects`                   | Project keys for the "newly created" section, e.g. `["ABC", "XYZ"]`                                                                                                             |
 | `newTicketDays`              | Window for newly created tickets (default 3)                                                                                                                                    |
 | `notifications` / `briefing` | Master toggles (default true)                                                                                                                                                   |
+| `updateCheck`                | Check GitHub for a newer plugin version at most once every 24 hours (default true)                                                                                              |
 | `statusBuckets`              | Status names per bucket: `{ "urgent": [...], "inProgress": [...], "planned": [...] }`. Defaults are Korean workflow names — set yours here                                      |
 | `transitionTargets`          | Quick-transition menu: `[{ "label": "✅ Done", "status": "Done" }]`. `[]` disables                                                                                              |
 | `sectionTitles`              | Override built-in section titles by id (`urgent`, `inProgress`, `planned`, `movedByOthers`, `newTickets`, `otherMine`)                                                          |
@@ -66,6 +71,7 @@ The plugin doubles as its own CLI (used by the clickable menu items):
 ```
 jira-tickets.5m.js                      # render (what SwiftBar runs)
 jira-tickets.5m.js set <path> <value>   # change an allowlisted config value
+jira-tickets.5m.js set style.preset terminal  # apply minimal / terminal / ticket / bubble
 jira-tickets.5m.js seen <KEY> <iso>     # mark ticket activity as seen
 jira-tickets.5m.js seen-all             # mark all moved-by-others as seen
 jira-tickets.5m.js snooze <KEY> <days>  # snooze moved activity
@@ -87,7 +93,7 @@ Notifications come from `osascript` — if you don't see them, allow **Script Ed
 3. [API 토큰 생성](https://id.atlassian.com/manage-profile/security/api-tokens) → `~/.config/jira-menubar/config.json`의 `apiToken`에 입력
 4. 메뉴바의 위젯 클릭 → 새로고침
 
-기본 상태명 버킷은 한국어 워크플로우(`검토 중`/`dev request` → 즉시 처리, `진행 중`, `계획 중`) 기준입니다. 다른 워크플로우면 `statusBuckets`를 수정하세요. 스타일(색·크기·박스 모양·여백)은 드롭다운 안 **⚙️ 위젯 설정**에서 클릭으로 바꿀 수 있습니다.
+기본 상태명 버킷은 한국어 워크플로우(`검토 중`/`dev request` → 즉시 처리, `진행 중`, `계획 중`) 기준입니다. 다른 워크플로우면 `statusBuckets`를 수정하세요. 스타일(색·크기·박스 모양·여백)은 드롭다운 안 **⚙️ 위젯 설정**에서 클릭으로 바꿀 수 있으며, 최상단의 미니멀/터미널/티켓/버블 프리셋으로 한 번에 바꾼 뒤 개별 조정할 수도 있습니다. 새 버전 확인은 기본적으로 하루 한 번만 실행되며 같은 설정 메뉴에서 끌 수 있습니다.
 
 ## License
 

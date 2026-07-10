@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/node
 // <xbar.title>Jira Tickets</xbar.title>
-// <xbar.version>v2.1.0</xbar.version>
+// <xbar.version>v2.2.0</xbar.version>
 // <xbar.author>Jun</xbar.author>
 // <xbar.desc>Jira 티켓 상태를 macOS 메뉴바에서 확인</xbar.desc>
 // <xbar.abouturl>https://github.com/agopwns/jira-menubar</xbar.abouturl>
@@ -13,8 +13,12 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { execFileSync } = require("node:child_process");
 
-const version = "v2.1.0";
+const version = "v2.2.0";
 const requestTimeoutMs = 10000;
+const updateCheckIntervalMs = 24 * 60 * 60 * 1000;
+const updateSourceUrl =
+  "https://raw.githubusercontent.com/agopwns/jira-menubar/main/jira-tickets.5m.js";
+const projectUrl = "https://github.com/agopwns/jira-menubar";
 const fields =
   "summary,status,priority,issuetype,updated,created,assignee,duedate,parent";
 const tokenUrl = "https://id.atlassian.com/manage-profile/security/api-tokens";
@@ -94,7 +98,78 @@ const styleDefaults = {
     error: "#e5534b",
   },
 };
+const stylePresets = {
+  minimal: {
+    menubarShape: "square",
+    menubarStroke: 1,
+    menubarFilled: false,
+    menubarRadius: 0,
+    ansi: false,
+    itemFont: "",
+    colors: {
+      menubar: "",
+      urgent: "",
+      key: "",
+      status: "",
+      summary: "",
+      assignee: "",
+      dim: "",
+    },
+  },
+  terminal: {
+    menubarShape: "square",
+    menubarStroke: 1,
+    menubarFilled: true,
+    menubarRadius: 0,
+    ansi: true,
+    itemFont: "Menlo",
+    colors: {
+      menubar: "#5f9f68",
+      urgent: "#c95c54",
+      key: "#63aa6c",
+      status: "#4f8f61",
+      summary: "#8a9096",
+      assignee: "#738b78",
+      dim: "#7c8780",
+    },
+  },
+  ticket: {
+    menubarShape: "ticket",
+    menubarStroke: 2,
+    menubarFilled: false,
+    menubarRadius: 4,
+    ansi: true,
+    itemFont: "",
+    colors: {
+      menubar: "#b7791f",
+      urgent: "#c4553d",
+      key: "#c17a2e",
+      status: "#a86524",
+      summary: "#8c8174",
+      assignee: "#9a7047",
+      dim: "#85796d",
+    },
+  },
+  bubble: {
+    menubarShape: "bubble",
+    menubarStroke: 1,
+    menubarFilled: true,
+    menubarRadius: 6,
+    ansi: true,
+    itemFont: "",
+    colors: {
+      menubar: "#3f83a8",
+      urgent: "#c6535d",
+      key: "#378fa8",
+      status: "#497fae",
+      summary: "#7d8994",
+      assignee: "#4d8794",
+      dim: "#74818a",
+    },
+  },
+};
 const settableConfigPaths = new Set([
+  "style.preset",
   "style.outline",
   "style.ansi",
   "style.menubarGlyphScale",
@@ -124,6 +199,7 @@ const settableConfigPaths = new Set([
   "newTicketDays",
   "notifications",
   "briefing",
+  "updateCheck",
 ]);
 const menuImageScale = 2;
 const menuImageDpi = 144;
@@ -196,6 +272,10 @@ function getSeenPath() {
   return path.join(getCacheDir(), "seen.json");
 }
 
+function getUpdateCheckPath() {
+  return path.join(getCacheDir(), "update-check.json");
+}
+
 function runConfigSetter() {
   if (process.argv.length !== 5) {
     return 1;
@@ -208,6 +288,13 @@ function runConfigSetter() {
     return 1;
   }
 
+  if (
+    dottedPath === "style.preset" &&
+    !Object.hasOwn(stylePresets, rawValue)
+  ) {
+    return 0;
+  }
+
   try {
     const configPath = getConfigPath();
     const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
@@ -216,11 +303,15 @@ function runConfigSetter() {
       return 1;
     }
 
-    setNestedConfigValue(
-      config,
-      dottedPath,
-      coerceConfigSetterValue(dottedPath, rawValue),
-    );
+    if (dottedPath === "style.preset") {
+      applyStylePreset(config, rawValue);
+    } else {
+      setNestedConfigValue(
+        config,
+        dottedPath,
+        coerceConfigSetterValue(dottedPath, rawValue),
+      );
+    }
     fs.writeFileSync(
       configPath,
       `${JSON.stringify(config, null, 2)}\n`,
@@ -231,6 +322,36 @@ function runConfigSetter() {
   } catch {
     return 1;
   }
+}
+
+function applyStylePreset(config, presetName) {
+  if (!Object.hasOwn(stylePresets, presetName)) {
+    return false;
+  }
+  const preset = stylePresets[presetName];
+
+  if (!isPlainObject(config.style)) {
+    config.style = {};
+  }
+
+  const colors = isPlainObject(config.style.colors)
+    ? config.style.colors
+    : {};
+  config.style = {
+    ...config.style,
+    menubarShape: preset.menubarShape,
+    menubarStroke: preset.menubarStroke,
+    menubarFilled: preset.menubarFilled,
+    menubarRadius: preset.menubarRadius,
+    ansi: preset.ansi,
+    itemFont: preset.itemFont,
+    colors: {
+      ...colors,
+      ...preset.colors,
+    },
+  };
+  delete config.style.preset;
+  return true;
 }
 
 function runSeenSetter() {
@@ -549,6 +670,8 @@ function normalizeConfig(config) {
     notifications:
       typeof config.notifications === "boolean" ? config.notifications : true,
     briefing: typeof config.briefing === "boolean" ? config.briefing : true,
+    updateCheck:
+      typeof config.updateCheck === "boolean" ? config.updateCheck : true,
     statusBuckets: normalizeStatusBuckets(config.statusBuckets),
     transitionTargets: normalizeTransitionTargets(config.transitionTargets),
     sectionTitles: normalizeSectionTitles(config.sectionTitles),
@@ -806,6 +929,99 @@ function readJsonObject(filePath, fallback = {}) {
 function writeJsonObject(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function readUpdateCheckCache() {
+  const cached = readJsonObject(getUpdateCheckPath(), {});
+  const checkedAt =
+    typeof cached.checkedAt === "string" ? cached.checkedAt.trim() : "";
+  const latestVersion =
+    typeof cached.latestVersion === "string"
+      ? cached.latestVersion.trim()
+      : "";
+
+  if (!Number.isFinite(Date.parse(checkedAt))) {
+    return null;
+  }
+
+  return { checkedAt, latestVersion };
+}
+
+function writeUpdateCheckCache(checkedAt, latestVersion) {
+  try {
+    writeJsonObject(getUpdateCheckPath(), { checkedAt, latestVersion });
+  } catch {}
+}
+
+function parseSemver(value) {
+  const match = /^v(\d+)\.(\d+)\.(\d+)$/.exec(String(value || ""));
+  if (!match) {
+    return null;
+  }
+
+  const parts = match.slice(1).map(Number);
+  return parts.every(Number.isSafeInteger) ? parts : null;
+}
+
+function isNewerVersion(candidate, current) {
+  const candidateParts = parseSemver(candidate);
+  const currentParts = parseSemver(current);
+  if (!candidateParts || !currentParts) {
+    return false;
+  }
+
+  for (let index = 0; index < candidateParts.length; index++) {
+    if (candidateParts[index] !== currentParts[index]) {
+      return candidateParts[index] > currentParts[index];
+    }
+  }
+
+  return false;
+}
+
+async function checkForUpdate(config) {
+  if (!config.updateCheck) {
+    return null;
+  }
+
+  try {
+    const now = new Date();
+    const cached = readUpdateCheckCache();
+    const cacheAge = cached
+      ? now.getTime() - Date.parse(cached.checkedAt)
+      : Infinity;
+
+    if (cacheAge >= 0 && cacheAge < updateCheckIntervalMs) {
+      return isNewerVersion(cached.latestVersion, version)
+        ? cached.latestVersion
+        : null;
+    }
+
+    let latestVersion = version;
+    try {
+      const response = await fetchResponse(updateSourceUrl, {});
+      if (!response.ok) {
+        return null;
+      }
+
+      const source = await response.text();
+      const match = /const\s+version\s*=\s*["'](v\d+\.\d+\.\d+)["']/.exec(
+        source,
+      );
+      if (!match || !parseSemver(match[1])) {
+        return null;
+      }
+
+      latestVersion = match[1];
+      return isNewerVersion(latestVersion, version) ? latestVersion : null;
+    } catch {
+      return null;
+    } finally {
+      writeUpdateCheckCache(now.toISOString(), latestVersion);
+    }
+  } catch {
+    return null;
+  }
 }
 
 function readSeenStore() {
@@ -2531,7 +2747,12 @@ function renderNormal(config, sectionResults, options = {}) {
   }
 
   dropdown.push(
-    ...renderFooter(config, options.doneStats, options.sprintStats),
+    ...renderFooter(
+      config,
+      options.doneStats,
+      options.sprintStats,
+      options.updateVersion,
+    ),
   );
 
   const menuBarLines = [renderMenuBarLine(menuTitle, style)];
@@ -2962,13 +3183,22 @@ function resultIssueCount(result) {
     : result.issues.length;
 }
 
-function renderFooter(config, doneStats, sprintStats) {
+function renderFooter(config, doneStats, sprintStats, updateVersion) {
   const style = getStyle(config);
 
   return [
     `🌐 Jira 열기 | href=${config.baseUrl}/jira/your-work`,
     "🔄 새로고침 | refresh=true",
     ...renderSettingsMenu(config),
+    ...(updateVersion
+      ? [
+          lineWithParams(`🔄 ${updateVersion} 업데이트 가능`, [
+            `href=${projectUrl}`,
+            sizeParam(style.sizes.footer),
+            colorParam(style.colors.dim),
+          ]),
+        ]
+      : []),
     ...(sprintStats
       ? [
           lineWithParams(renderSprintFooterText(sprintStats), [
@@ -3034,6 +3264,22 @@ function renderSettingsMenu(config) {
   const pushGroup = (label) => {
     rows.push(lineWithParams(`-- ${label}`, settingsStyleParams));
   };
+
+  pushGroup("🎨 테마 프리셋");
+  for (const [presetName, label] of [
+    ["minimal", "미니멀 — 기본·무채색"],
+    ["terminal", "터미널 — 절제된 초록"],
+    ["ticket", "티켓 — 따뜻한 앰버"],
+    ["bubble", "버블 — 파랑·시안"],
+  ]) {
+    pushSetting(
+      "----",
+      label,
+      styleMatchesPreset(style, stylePresets[presetName]),
+      "style.preset",
+      presetName,
+    );
+  }
 
   pushSetting(
     "--",
@@ -3272,6 +3518,7 @@ function renderSettingsMenu(config) {
     [60, "길게 (60자)"],
     [80, "아주 길게 (80자)"],
   ]);
+  pushGroup("🔔 알림 및 업데이트");
   pushSetting(
     "--",
     "알림: 켜기",
@@ -3284,6 +3531,20 @@ function renderSettingsMenu(config) {
     "알림: 끄기",
     config.notifications === false,
     "notifications",
+    "false",
+  );
+  pushSetting(
+    "--",
+    "업데이트 확인 켜기",
+    config.updateCheck === true,
+    "updateCheck",
+    "true",
+  );
+  pushSetting(
+    "--",
+    "업데이트 확인 끄기",
+    config.updateCheck === false,
+    "updateCheck",
     "false",
   );
   pushSetting(
@@ -3376,7 +3637,25 @@ function renderSettingsMenu(config) {
   }
 }
 
-function renderAllFailed(config, sectionResults) {
+function styleMatchesPreset(style, preset) {
+  if (!preset) {
+    return false;
+  }
+
+  return (
+    style.menubarShape === preset.menubarShape &&
+    style.menubarStroke === preset.menubarStroke &&
+    style.menubarFilled === preset.menubarFilled &&
+    style.menubarRadius === preset.menubarRadius &&
+    style.ansi === preset.ansi &&
+    style.itemFont === preset.itemFont &&
+    Object.entries(preset.colors).every(
+      ([key, value]) => style.colors[key] === value,
+    )
+  );
+}
+
+function renderAllFailed(config, sectionResults, updateVersion) {
   const style = getStyle(config);
   const firstError = sectionResults.find((result) => !result.ok)?.error;
   const lines = [
@@ -3400,7 +3679,7 @@ function renderAllFailed(config, sectionResults) {
         colorParam(style.colors.error),
       ]),
       "---",
-      ...cachedBodyWithFreshFooter(cached.body, config),
+      ...cachedBodyWithFreshFooter(cached.body, config, updateVersion),
     );
   } else {
     lines.push(
@@ -3409,14 +3688,14 @@ function renderAllFailed(config, sectionResults) {
         colorParam(style.colors.dim),
       ]),
       "---",
-      ...renderFooter(config),
+      ...renderFooter(config, null, null, updateVersion),
     );
   }
 
   return lines.join("\n");
 }
 
-function cachedBodyWithFreshFooter(body, config) {
+function cachedBodyWithFreshFooter(body, config, updateVersion) {
   const cachedLines = String(body || "").split("\n");
   const footerIndex = cachedLines.findIndex((line) =>
     line.startsWith("🌐 Jira 열기 |"),
@@ -3431,7 +3710,7 @@ function cachedBodyWithFreshFooter(body, config) {
     lines.push("---");
   }
 
-  lines.push(...renderFooter(config));
+  lines.push(...renderFooter(config, null, null, updateVersion));
   return lines;
 }
 
@@ -3866,9 +4145,10 @@ async function main() {
   } catch {}
   const sections = buildSectionDefs(config);
   const queries = buildQueryDefs(sections, config);
-  const [queryResults, activeSprintResult] = await Promise.all([
+  const [queryResults, activeSprintResult, updateVersion] = await Promise.all([
     fetchQueryResults(config, queries),
     fetchActiveSprintResult(config),
+    checkForUpdate(config),
   ]);
   const sectionResults = buildSectionResults(
     sections,
@@ -3902,10 +4182,11 @@ async function main() {
     now,
   );
   const output = allFailed
-    ? renderAllFailed(config, sectionResults)
+    ? renderAllFailed(config, sectionResults, updateVersion)
     : renderNormal(config, sectionResults, {
         doneStats,
         sprintStats,
+        updateVersion,
         newCommentKeys: commentDetection.newCommentKeys,
         now,
       });

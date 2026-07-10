@@ -8,6 +8,7 @@
   "newTicketDays": 3,
   "notifications": true,
   "briefing": true,
+  "updateCheck": true,
   "statusBuckets": {
     "urgent": ["검토 중", "dev request"],
     "inProgress": ["진행 중"],

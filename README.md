@@ -2,6 +2,8 @@
 
 A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin that turns your macOS menu bar into a personal Jira control tower. Single file, zero dependencies (Node.js built-ins only).
 
+> New teammate? Follow the **[English onboarding guide](ONBOARDING.en.md)** or **[한국어 온보딩 가이드](ONBOARDING.md)**. The installer verifies Jira access and discovers `accountId` automatically.
+
 | rounded                                | pill (filled)                           | ticket                               | bubble                               |
 | -------------------------------------- | --------------------------------------- | ------------------------------------ | ------------------------------------ |
 | ![rounded](docs/img/shape-rounded.png) | ![pill](docs/img/shape-pill-filled.png) | ![ticket](docs/img/shape-ticket.png) | ![bubble](docs/img/shape-bubble.png) |
@@ -11,7 +13,7 @@ The screenshot shapes can be combined with four one-click theme presets at the t
 ## Features
 
 - **Menu bar counter** — `J34·2!` = 34 open tickets, 2 needing immediate action. Rendered as a hand-drawn pixel-font PNG with 5 box shapes (rounded / pill / square / ticket / speech bubble), outline or filled, fully color-configurable — or plain text mode.
-- **Dropdown sections** — action-needed, in-progress, planned, moved-by-others (activity you haven't seen), newly created, everything else, plus unlimited custom JQL sections.
+- **Dropdown sections** — action-needed, in-progress, planned, moved-by-others (activity you haven't seen), newly created, everything else, plus up to five custom JQL sections.
 - **Native notifications** — new urgent tickets, new comments (with **@mention detection**), weekly stale-ticket report, and a weekday morning briefing. All diff-based: no notification storms.
 - **Quick actions** — open ticket, mark activity as seen, snooze moved activity for 1/3/7 days, assign a ticket to yourself, add a comment from a native dialog, and run status transitions with a confirm step (transition IDs resolved live per ticket).
 - **Sprint footer** — optionally shows the active sprint, days remaining, and your incomplete/total sprint ticket count.
@@ -25,17 +27,23 @@ The screenshot shapes can be combined with four one-click theme presets at the t
 
 - macOS with [SwiftBar](https://github.com/swiftbar/SwiftBar) (`brew install swiftbar`)
 - Node.js 18+ (`brew install node`)
-- A Jira Cloud account + [API token](https://id.atlassian.com/manage-profile/security/api-tokens)
+- A Jira Cloud account + an [unscoped API token](https://id.atlassian.com/manage-profile/security/api-tokens)
 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/agopwns/jira-menubar/main/install.sh | bash
+/bin/bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/agopwns/jira-menubar/main/install.sh | /bin/bash'
 ```
 
-The installer copies the plugin into your SwiftBar plugin folder, points the shebang at your Node.js, and scaffolds `~/.config/jira-menubar/config.json`.
+Launch SwiftBar and choose its plugin folder before running the command. On first install, the installer securely prompts for your Jira URL, email, API token, project keys, and optional board ID. It verifies the account and project access, discovers `myAccountId`, points the shebang at your local Node.js, and writes `~/.config/jira-menubar/config.json` with mode `600`.
 
-Manual install: copy `jira-tickets.5m.js` into your SwiftBar plugin folder, `chmod +x` it, fix the shebang if Node isn't at `/opt/homebrew/bin/node`, and create the config below.
+Running the installer again updates the plugin and keeps an existing complete config. An incomplete config re-enters setup, while malformed JSON is left untouched and reported as an error. To replace the account settings:
+
+```bash
+/bin/bash -o pipefail -c 'curl -fsSL https://raw.githubusercontent.com/agopwns/jira-menubar/main/install.sh | /bin/bash -s -- --reconfigure'
+```
+
+When run from a local clone, `./install.sh` installs the checked-out plugin instead of downloading `main`. The advanced `--skip-setup` option creates the example config without connecting an account; all required fields must then be populated manually.
 
 ## Configuration
 
@@ -46,7 +54,7 @@ Manual install: copy `jira-tickets.5m.js` into your SwiftBar plugin folder, `chm
 | `baseUrl`                    | `https://your-site.atlassian.net`                                                                                                                                               |
 | `email`                      | Atlassian account email                                                                                                                                                         |
 | `apiToken`                   | API token (file is chmod 600)                                                                                                                                                   |
-| `myAccountId`                | Your accountId — `curl -su email:token '<baseUrl>/rest/api/3/myself' \| jq -r .accountId`                                                                                       |
+| `myAccountId`                | Your Jira account ID. The installer discovers it automatically                                                                                                                 |
 | `boardId`                    | Jira board ID for the active-sprint footer. Empty by default (disabled); use the numeric ID from the board URL (`/boards/<id>`, or the `rapidView` parameter on classic boards) |
 | `projects`                   | Project keys for the "newly created" section, e.g. `["ABC", "XYZ"]`                                                                                                             |
 | `newTicketDays`              | Window for newly created tickets (default 3)                                                                                                                                    |
@@ -86,14 +94,10 @@ Notifications come from `osascript` — if you don't see them, allow **Script Ed
 
 ---
 
-## 한국어 빠른 시작
+## Onboarding guides
 
-1. `brew install swiftbar node` 후 SwiftBar 실행, 플러그인 폴더 지정
-2. 위 설치 스크립트 실행
-3. [API 토큰 생성](https://id.atlassian.com/manage-profile/security/api-tokens) → `~/.config/jira-menubar/config.json`의 `apiToken`에 입력
-4. 메뉴바의 위젯 클릭 → 새로고침
-
-기본 상태명 버킷은 한국어 워크플로우(`검토 중`/`dev request` → 즉시 처리, `진행 중`, `계획 중`) 기준입니다. 다른 워크플로우면 `statusBuckets`를 수정하세요. 스타일(색·크기·박스 모양·여백)은 드롭다운 안 **⚙️ 위젯 설정**에서 클릭으로 바꿀 수 있으며, 최상단의 미니멀/터미널/티켓/버블 프리셋으로 한 번에 바꾼 뒤 개별 조정할 수도 있습니다. 새 버전 확인은 기본적으로 하루 한 번만 실행되며 같은 설정 메뉴에서 끌 수 있습니다.
+- **[English](ONBOARDING.en.md)**
+- **[한국어](ONBOARDING.md)**
 
 ## License
 

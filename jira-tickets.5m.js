@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/node
 // <xbar.title>Jira Tickets</xbar.title>
-// <xbar.version>v2.2.0</xbar.version>
+// <xbar.version>v2.2.1</xbar.version>
 // <xbar.author>Jun</xbar.author>
 // <xbar.desc>Jira 티켓 상태를 macOS 메뉴바에서 확인</xbar.desc>
 // <xbar.abouturl>https://github.com/agopwns/jira-menubar</xbar.abouturl>
@@ -13,7 +13,7 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { execFileSync } = require("node:child_process");
 
-const version = "v2.2.0";
+const version = "v2.2.1";
 const requestTimeoutMs = 10000;
 const updateCheckIntervalMs = 24 * 60 * 60 * 1000;
 const updateSourceUrl =
@@ -275,6 +275,8 @@ function getSeenPath() {
 function getUpdateCheckPath() {
   return path.join(getCacheDir(), "update-check.json");
 }
+
+hardenDefaultCacheStorage();
 
 function runConfigSetter() {
   if (process.argv.length !== 5) {
@@ -927,8 +929,52 @@ function readJsonObject(filePath, fallback = {}) {
 }
 
 function writeJsonObject(filePath, value) {
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  writePrivateText(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function ensurePrivateDirectory(directoryPath) {
+  const existed = fs.existsSync(directoryPath);
+  fs.mkdirSync(directoryPath, { recursive: true, mode: 0o700 });
+  if (!existed) {
+    fs.chmodSync(directoryPath, 0o700);
+  }
+}
+
+function hardenDefaultCacheStorage() {
+  if (process.env.JIRA_MENUBAR_CACHE_DIR) {
+    return;
+  }
+
+  const cacheDir = getCacheDir();
+  try {
+    if (!fs.existsSync(cacheDir)) {
+      return;
+    }
+    fs.chmodSync(cacheDir, 0o700);
+  } catch {}
+
+  for (const filePath of [
+    getCacheOutputPath(),
+    getCacheTimestampPath(),
+    getNotifyStatePath(),
+    getSeenPath(),
+    getUpdateCheckPath(),
+  ]) {
+    try {
+      if (fs.existsSync(filePath)) {
+        fs.chmodSync(filePath, 0o600);
+      }
+    } catch {}
+  }
+}
+
+function writePrivateText(filePath, value) {
+  ensurePrivateDirectory(path.dirname(filePath));
+  fs.writeFileSync(filePath, value, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
+  fs.chmodSync(filePath, 0o600);
 }
 
 function readUpdateCheckCache() {
@@ -3745,9 +3791,8 @@ function readCache() {
 
 function writeCache(output) {
   try {
-    fs.mkdirSync(getCacheDir(), { recursive: true });
-    fs.writeFileSync(getCacheOutputPath(), `${output}\n`, "utf8");
-    fs.writeFileSync(getCacheTimestampPath(), String(Date.now()), "utf8");
+    writePrivateText(getCacheOutputPath(), `${output}\n`);
+    writePrivateText(getCacheTimestampPath(), String(Date.now()));
   } catch {}
 }
 
@@ -4068,8 +4113,12 @@ function sendNotification(title, body) {
     const dryRunPath = process.env.JIRA_MENUBAR_NOTIFY_DRYRUN;
 
     if (dryRunPath) {
-      fs.mkdirSync(path.dirname(dryRunPath), { recursive: true });
-      fs.appendFileSync(dryRunPath, `${title}\t${body}\n`, "utf8");
+      ensurePrivateDirectory(path.dirname(dryRunPath));
+      fs.appendFileSync(dryRunPath, `${title}\t${body}\n`, {
+        encoding: "utf8",
+        mode: 0o600,
+      });
+      fs.chmodSync(dryRunPath, 0o600);
       return;
     }
 

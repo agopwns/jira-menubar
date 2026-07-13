@@ -98,6 +98,7 @@ Notifications come from `osascript` — if you don't see them, allow **Script Ed
 
 - **[English](ONBOARDING.en.md)**
 - **[한국어](ONBOARDING.md)**
+- **[v2.2.1 release record](docs/v2.2.1-release.md)**
 
 ## License
 

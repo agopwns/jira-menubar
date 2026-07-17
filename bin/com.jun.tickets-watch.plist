@@ -6,7 +6,7 @@
   <string>com.jun.tickets-watch</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/korelijun/.claude/bin/tickets-watch-keepalive.sh</string>
+    <string>/Users/YOUR_USER/path/to/jira-menubar/bin/tickets-watch-keepalive.sh</string>
   </array>
   <key>RunAtLoad</key>
   <true/>

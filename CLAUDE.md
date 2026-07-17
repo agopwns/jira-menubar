@@ -2,6 +2,8 @@
 
 Single-file SwiftBar plugin (`jira-tickets.5m.js`, Node.js built-ins only, no npm deps). Everything — rendering, Jira API, CLI action modes, PNG drawing — lives in that one file by design. Keep it that way.
 
+A second single-file tool lives in `bin/tickets`: a standalone terminal dashboard (same config file, same no-deps rule) with `--watch` mode, section bucketing, and local-work markers (`●` git worktree checked out for a ticket key, `▶` a tmux pane active inside it). `bin/tickets-watch-keepalive.sh` + `bin/com.jun.tickets-watch.plist` keep a `tickets` tmux session alive via launchd. The two tools share no code — keep them independent.
+
 ## Architecture
 
 - **Entry dispatch**: `process.argv[2]` selects CLI mode (`set` / `seen` / `seen-all` / `transition` / `stale-report` / `briefing`) or falls through to render mode.
@@ -29,5 +31,6 @@ Single-file SwiftBar plugin (`jira-tickets.5m.js`, Node.js built-ins only, no np
 ## Release
 
 - Version lives in the `version` const AND the `<xbar.version>` metadata comment — bump both.
-- Before pushing: `grep -ci 'hermont\|712020:\|junha@' jira-tickets.5m.js` must be 0 (public repo).
+- Before pushing: `grep -rci 'hermont\|712020:\|junha@\|korelijun' jira-tickets.5m.js bin/` must find nothing (public repo — machine-specific paths go in `~/.config/jira-menubar/config.json` `worktreeRepo` or the `TICKETS_WORKTREE_REPO` env var, never in committed files).
+- `node --check bin/tickets` before committing dashboard changes; local-work markers need a repo path from config/env, and `getWorktreeMap` must stay silent-failure (empty map) when it is absent.
 - README raw URLs point at `main` — keep that the default branch.

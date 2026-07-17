@@ -6,7 +6,9 @@ const path = require('path')
 const { execSync } = require('child_process')
 
 const CONFIG_PATH = path.join(os.homedir(), '.config', 'jira-menubar', 'config.json')
-const FLEET_REPO_PATH = '/Users/korelijun/Desktop/Local Code/hermont-fleet-manager'
+// Optional: repo whose worktrees/branches are scanned for local-work markers.
+// Set "worktreeRepo" in the config file or TICKETS_WORKTREE_REPO in the env.
+const FLEET_REPO_PATH = process.env.TICKETS_WORKTREE_REPO || null
 
 const GREEN = '\x1b[32m'
 
@@ -162,12 +164,13 @@ function extractTicketKey (branchName) {
   return `${m[1].toUpperCase()}-${m[2]}`
 }
 
-function getWorktreeMap () {
+function getWorktreeMap (repoPath) {
   const map = {}
+  if (!repoPath) return map
   let output = ''
   try {
     output = execSync('git worktree list --porcelain', {
-      cwd: FLEET_REPO_PATH,
+      cwd: repoPath,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore']
     })
@@ -202,8 +205,9 @@ function getActiveTmuxPaths () {
   return output.split('\n').map(l => l.trim()).filter(Boolean)
 }
 
-function getLocalWorkInfo () {
-  const worktreeMap = getWorktreeMap()
+function getLocalWorkInfo (config) {
+  const repoPath = FLEET_REPO_PATH || (config && config.worktreeRepo) || null
+  const worktreeMap = getWorktreeMap(repoPath)
   const tmuxPaths = getActiveTmuxPaths()
 
   const activeKeys = new Set()
@@ -355,7 +359,7 @@ function render (result, config, args) {
   const buckets = Object.assign({}, DEFAULT_BUCKETS, config.statusBuckets || {})
   const { main, movedByOthers } = result
   const { urgent, inProgress, testing, planned, other } = classify(main, buckets)
-  const localInfo = getLocalWorkInfo()
+  const localInfo = getLocalWorkInfo(config)
 
   const now = new Date()
   const timeStr = now.toTimeString().slice(0, 8)

@@ -4,7 +4,9 @@
   "apiToken": "",
   "myAccountId": "",
   "boardId": "",
-  "projects": ["ABC"],
+  "projects": [
+    "ABC"
+  ],
   "newTicketDays": 3,
   "pollIntervalMinutes": 5,
   "notifications": true,
@@ -23,14 +25,31 @@
     }
   },
   "statusBuckets": {
-    "urgent": ["검토 중", "dev request"],
-    "inProgress": ["진행 중"],
-    "planned": ["계획 중"]
+    "urgent": [
+      "검토 중",
+      "dev request"
+    ],
+    "inProgress": [
+      "진행 중"
+    ],
+    "planned": [
+      "계획 중"
+    ]
   },
   "transitionTargets": [
-    { "label": "▶ 진행 중으로", "status": "진행 중" },
-    { "label": "🧪 테스트로", "status": "테스트" },
-    { "label": "✅ 완료 처리", "status": "완료" }
+    {
+      "label": "▶ 진행 중으로",
+      "status": "진행 중"
+    },
+    {
+      "label": "🧪 테스트로",
+      "status": "테스트"
+    },
+    {
+      "label": "✅ 완료 처리",
+      "status": "완료"
+    }
   ],
-  "customSections": []
+  "customSections": [],
+  "worktreeRepo": ""
 }

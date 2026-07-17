@@ -55,7 +55,7 @@ Refresh the plugin in SwiftBar, then check the menu bar.
 - If you see `J⚙`, setup is incomplete.
 - If you see `J!`, open the widget and check the Jira error message.
 
-If the status is not `J!`, the ticket sections appear without errors, and `측정 HH:MM · v...` appears at the bottom of the widget, the plugin is running correctly.
+If the status is not `J!`, the ticket sections appear without errors, and `조회 HH:MM · N분 주기 · v...` appears at the bottom of the widget, the plugin is running correctly. The default is five minutes.
 
 ## Match your team's configuration
 
@@ -64,6 +64,8 @@ The configuration file is located at `~/.config/jira-menubar/config.json`. You c
 | Setting | Purpose |
 | --- | --- |
 | `projects` | Project keys used to retrieve new tickets and sprints |
+| `pollIntervalMinutes` | Automatic Jira query interval; choose 5, 10, 15, 30, or 60 minutes in the widget settings |
+| `sectionDisplay` | Built-in ticket-region visibility and expanded/submenu layout |
 | `statusBuckets` | Your Jira status names, grouped into immediate, in-progress, and planned work |
 | `transitionTargets` | Target statuses shown in the quick status-change menu |
 | `boardId` | Board ID used for active sprint statistics (optional) |
@@ -72,6 +74,10 @@ The configuration file is located at `~/.config/jira-menubar/config.json`. You c
 Each value in `statusBuckets` must exactly match the status name displayed in Jira. Tickets with an unmatched status do not disappear; they are shown under **기타 내 티켓 (Other tickets assigned to me)**.
 
 You can find the board ID in the Jira board URL, either after `/boards/<number>` or in `rapidView=<number>`.
+
+To reduce automatic queries, choose an interval under **⚙️ 위젯 설정 (Widget settings) → Jira 조회 주기 (Jira query interval)**. Manual **🔄 새로고침 (Refresh)** always queries Jira immediately regardless of this setting.
+
+If many tickets make the menu too long, open **⚙️ 위젯 설정 (Widget settings) → 🗂 티켓 영역 (Ticket regions)**. Uncheck regions you do not need, or choose **접어서 보기 — 하위 메뉴 (Fold into submenus)**. Folded mode leaves only each region title and count in the root menu; its tickets and quick actions remain available in the nested menu.
 
 ## Update or reconfigure
 

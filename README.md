@@ -18,6 +18,8 @@ The screenshot shapes can be combined with four one-click theme presets at the t
 - **Quick actions** — open ticket, mark activity as seen, snooze moved activity for 1/3/7 days, assign a ticket to yourself, add a comment from a native dialog, and run status transitions with a confirm step (transition IDs resolved live per ticket).
 - **Sprint footer** — optionally shows the active sprint, days remaining, and your incomplete/total sprint ticket count.
 - **Done stats** — today / this week completion counts in the footer.
+- **Configurable Jira polling** — choose a 5 / 10 / 15 / 30 / 60 minute Jira query interval from the widget. Manual refresh always queries immediately.
+- **Section visibility and folding** — show only the built-in ticket regions you care about, or fold every populated region into a submenu so 30+ tickets do not fill the root dropdown.
 - **Update checker** — checks GitHub at most once every 24 hours and quietly adds an update link to the footer when a newer semantic version is available. It is enabled by default and can be toggled in settings.
 - **Theme presets** — switch the complete shape, fill, ANSI, font, and color bundle in one click, then fine-tune with the existing style controls.
 - **In-dropdown settings** — 25+ setting groups (colors per text region, sizes, box shape/stroke/padding, toggles) editable by clicking, no config editing needed.
@@ -58,6 +60,8 @@ When run from a local clone, `./install.sh` installs the checked-out plugin inst
 | `boardId`                    | Jira board ID for the active-sprint footer. Empty by default (disabled); use the numeric ID from the board URL (`/boards/<id>`, or the `rapidView` parameter on classic boards) |
 | `projects`                   | Project keys for the "newly created" section, e.g. `["ABC", "XYZ"]`                                                                                                             |
 | `newTicketDays`              | Window for newly created tickets (default 3)                                                                                                                                    |
+| `pollIntervalMinutes`        | Jira query interval: `5`, `10`, `15`, `30`, or `60` minutes (default 5). Also editable from ⚙️ settings; manual refresh bypasses the interval cache                               |
+| `sectionDisplay`             | Ticket-region layout: `mode` is `expanded` (default) or `submenu`; `visible` toggles the seven built-in regions. All options are available under ⚙️ settings                    |
 | `notifications` / `briefing` | Master toggles (default true)                                                                                                                                                   |
 | `updateCheck`                | Check GitHub for a newer plugin version at most once every 24 hours (default true)                                                                                              |
 | `statusBuckets`              | Status names per bucket: `{ "urgent": [...], "inProgress": [...], "planned": [...] }`. Defaults are Korean workflow names — set yours here                                      |
@@ -71,6 +75,10 @@ When run from a local clone, `./install.sh` installs the checked-out plugin inst
 Set `boardId` to a board's numeric ID to enable a footer such as `🏃 Sprint 12 · D-4 · 내 티켓 3/5`. The plugin reads the active sprint from Jira's board API and classifies completed tickets by `statusCategory`; if either sprint request fails, only this optional footer is omitted.
 
 Moved-by-others tickets can be snoozed for 1, 3, or 7 days. A ticket reappears immediately if it receives activity after it was snoozed. Newly opened and moved tickets offer **🙋 나에게 할당** when `myAccountId` is configured and you are not already the assignee. Your ticket buckets and moved tickets offer **💬 코멘트 달기**, which opens a native macOS text dialog.
+
+SwiftBar still invokes the lightweight plugin process every five minutes because that base tick is encoded in the filename. For intervals longer than five minutes, scheduled runs reuse the last rendered output without contacting Jira until the selected interval has elapsed—even when the previous query failed. This reduces Jira API traffic and network/battery wake work; CPU and memory are only used briefly because the Node.js process exits after each run.
+
+For a shorter dropdown, open **⚙️ 위젯 설정 → 🗂 티켓 영역**. Each checked built-in region can be hidden independently. **접어서 보기 — 하위 메뉴** keeps the region title and count in the root dropdown and moves its tickets and quick actions into a nested menu. Hidden regions still participate in the menu-bar total and notifications; this setting changes presentation only. Custom JQL sections remain visible and follow the selected expanded/submenu mode.
 
 ## CLI modes
 

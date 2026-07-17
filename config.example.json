@@ -6,9 +6,22 @@
   "boardId": "",
   "projects": ["ABC"],
   "newTicketDays": 3,
+  "pollIntervalMinutes": 5,
   "notifications": true,
   "briefing": true,
   "updateCheck": true,
+  "sectionDisplay": {
+    "mode": "expanded",
+    "visible": {
+      "urgent": true,
+      "inProgress": true,
+      "planned": true,
+      "movedByOthers": true,
+      "newTickets": true,
+      "otherMine": true,
+      "stale": true
+    }
+  },
   "statusBuckets": {
     "urgent": ["검토 중", "dev request"],
     "inProgress": ["진행 중"],

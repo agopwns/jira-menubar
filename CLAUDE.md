@@ -20,6 +20,8 @@ Single-file SwiftBar plugin (`jira-tickets.5m.js`, Node.js built-ins only, no np
 ## Testing
 
 - `node --check jira-tickets.5m.js` first, always.
+- Polling/cache and section-display regression: `node --test tests/poll-interval.test.js`.
+- Poll throttling records each completed attempt in `last-poll.*`; `last.timestamp` remains the last-good cache time. Write poll output before its timestamp so an interrupted attempt cannot make older output look fresh.
 - Offline harness pattern: mock `fetch`, point caches via `JIRA_MENUBAR_CACHE_DIR`, config via `JIRA_MENUBAR_CONFIG`, capture notifications via `JIRA_MENUBAR_NOTIFY_DRYRUN=<file>`.
 - Live smoke test: run the plugin directly; first output line must be `| image=`, `| templateImage=`, or a text title — then `open -g "swiftbar://refreshplugin?name=jira-tickets"`.
 - Setter round-trips must never touch `apiToken` (allowlist) and must preserve file mode 600.

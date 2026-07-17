@@ -1,11 +1,11 @@
 #!/opt/homebrew/bin/node
 // <xbar.title>Jira Tickets</xbar.title>
-// <xbar.version>v2.2.1</xbar.version>
+// <xbar.version>v2.3.0</xbar.version>
 // <xbar.author>Jun</xbar.author>
 // <xbar.desc>Jira 티켓 상태를 macOS 메뉴바에서 확인</xbar.desc>
 // <xbar.abouturl>https://github.com/agopwns/jira-menubar</xbar.abouturl>
 // <xbar.dependencies>node</xbar.dependencies>
-// SwiftBar 플러그인: 5분마다 갱신. 메뉴바=내 Jira 티켓 수, 클릭=섹션별 티켓 목록.
+// SwiftBar 플러그인: 5분 tick, 설정한 주기마다 Jira 조회. 메뉴바=내 Jira 티켓 수, 클릭=섹션별 티켓 목록.
 
 const fs = require("node:fs");
 const os = require("node:os");
@@ -13,9 +13,16 @@ const path = require("node:path");
 const zlib = require("node:zlib");
 const { execFileSync } = require("node:child_process");
 
-const version = "v2.2.1";
+const version = "v2.3.0";
 const requestTimeoutMs = 10000;
 const updateCheckIntervalMs = 24 * 60 * 60 * 1000;
+const defaultPollIntervalMinutes = 5;
+const pollIntervalMinuteOptions = [5, 10, 15, 30, 60];
+const automaticRefreshReasons = new Set([
+  "schedule",
+  "firstlaunch",
+  "wakefromsleep",
+]);
 const updateSourceUrl =
   "https://raw.githubusercontent.com/agopwns/jira-menubar/main/jira-tickets.5m.js";
 const projectUrl = "https://github.com/agopwns/jira-menubar";
@@ -49,6 +56,19 @@ const sectionTitleIds = [
   "newTickets",
   "otherMine",
 ];
+const configurableSectionOptions = [
+  ["urgent", "🔥 즉시 처리"],
+  ["inProgress", "🚧 진행 중"],
+  ["planned", "📋 계획 중"],
+  ["movedByOthers", "🔔 남이 움직인 티켓"],
+  ["newTickets", "🆕 새로 열린 티켓"],
+  ["otherMine", "📦 기타 내 티켓"],
+  ["stale", "🕸 스테일"],
+];
+const configurableSectionIds = new Set(
+  configurableSectionOptions.map(([id]) => id),
+);
+const sectionDisplayModes = new Set(["expanded", "submenu"]);
 const priorityRanks = {
   Highest: 5,
   High: 4,
@@ -197,6 +217,11 @@ const settableConfigPaths = new Set([
   "style.colors.header",
   "style.colors.urgent",
   "newTicketDays",
+  "pollIntervalMinutes",
+  "sectionDisplay.mode",
+  ...configurableSectionOptions.map(
+    ([id]) => `sectionDisplay.visible.${id}`,
+  ),
   "notifications",
   "briefing",
   "updateCheck",
@@ -264,6 +289,14 @@ function getCacheTimestampPath() {
   return path.join(getCacheDir(), "last.timestamp");
 }
 
+function getPollOutputPath() {
+  return path.join(getCacheDir(), "last-poll.txt");
+}
+
+function getPollTimestampPath() {
+  return path.join(getCacheDir(), "last-poll.timestamp");
+}
+
 function getNotifyStatePath() {
   return path.join(getCacheDir(), "notify-state.json");
 }
@@ -305,14 +338,30 @@ function runConfigSetter() {
       return 1;
     }
 
+    const value = coerceConfigSetterValue(dottedPath, rawValue);
+    if (
+      dottedPath === "pollIntervalMinutes" &&
+      !pollIntervalMinuteOptions.includes(value)
+    ) {
+      return 0;
+    }
+    if (
+      dottedPath === "sectionDisplay.mode" &&
+      !sectionDisplayModes.has(value)
+    ) {
+      return 0;
+    }
+    if (
+      dottedPath.startsWith("sectionDisplay.visible.") &&
+      typeof value !== "boolean"
+    ) {
+      return 0;
+    }
+
     if (dottedPath === "style.preset") {
       applyStylePreset(config, rawValue);
     } else {
-      setNestedConfigValue(
-        config,
-        dottedPath,
-        coerceConfigSetterValue(dottedPath, rawValue),
-      );
+      setNestedConfigValue(config, dottedPath, value);
     }
     fs.writeFileSync(
       configPath,
@@ -669,6 +718,9 @@ function normalizeConfig(config) {
       Number.isFinite(newTicketDays) && newTicketDays >= 0
         ? Math.floor(newTicketDays)
         : 3,
+    pollIntervalMinutes: normalizePollIntervalMinutes(
+      config.pollIntervalMinutes,
+    ),
     notifications:
       typeof config.notifications === "boolean" ? config.notifications : true,
     briefing: typeof config.briefing === "boolean" ? config.briefing : true,
@@ -678,7 +730,30 @@ function normalizeConfig(config) {
     transitionTargets: normalizeTransitionTargets(config.transitionTargets),
     sectionTitles: normalizeSectionTitles(config.sectionTitles),
     customSections: normalizeCustomSections(config.customSections),
+    sectionDisplay: normalizeSectionDisplay(config.sectionDisplay),
     style: normalizeStyle(config.style),
+  };
+}
+
+function normalizePollIntervalMinutes(value) {
+  const minutes = Number(value);
+  return pollIntervalMinuteOptions.includes(minutes)
+    ? minutes
+    : defaultPollIntervalMinutes;
+}
+
+function normalizeSectionDisplay(sectionDisplay) {
+  const value = isPlainObject(sectionDisplay) ? sectionDisplay : {};
+  const visible = isPlainObject(value.visible) ? value.visible : {};
+
+  return {
+    mode: sectionDisplayModes.has(value.mode) ? value.mode : "expanded",
+    visible: Object.fromEntries(
+      configurableSectionOptions.map(([id]) => [
+        id,
+        typeof visible[id] === "boolean" ? visible[id] : true,
+      ]),
+    ),
   };
 }
 
@@ -956,6 +1031,8 @@ function hardenDefaultCacheStorage() {
   for (const filePath of [
     getCacheOutputPath(),
     getCacheTimestampPath(),
+    getPollOutputPath(),
+    getPollTimestampPath(),
     getNotifyStatePath(),
     getSeenPath(),
     getUpdateCheckPath(),
@@ -975,6 +1052,30 @@ function writePrivateText(filePath, value) {
     mode: 0o600,
   });
   fs.chmodSync(filePath, 0o600);
+}
+
+function writePrivateTextAtomic(filePath, value) {
+  const directoryPath = path.dirname(filePath);
+  const temporaryPath = path.join(
+    directoryPath,
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+
+  ensurePrivateDirectory(directoryPath);
+  try {
+    fs.writeFileSync(temporaryPath, value, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.chmodSync(temporaryPath, 0o600);
+    fs.renameSync(temporaryPath, filePath);
+  } catch (error) {
+    try {
+      fs.unlinkSync(temporaryPath);
+    } catch {}
+    throw error;
+  }
 }
 
 function readUpdateCheckCache() {
@@ -2775,7 +2876,12 @@ function renderNormal(config, sectionResults, options = {}) {
 
   const chunks = [];
   for (const result of sectionResults) {
-    const chunk = renderSection(config, result, options);
+    if (!isSectionVisible(config, result.section.id)) {
+      continue;
+    }
+
+    const renderedSection = renderSection(config, result, options);
+    const chunk = formatSectionChunk(config, renderedSection);
     if (chunk.length > 0) {
       chunks.push(chunk);
     }
@@ -2812,6 +2918,26 @@ function renderNormal(config, sectionResults, options = {}) {
   }
 
   return [...menuBarLines, "---", ...dropdown].join("\n");
+}
+
+function isSectionVisible(config, sectionId) {
+  if (!configurableSectionIds.has(sectionId)) {
+    return true;
+  }
+
+  return config.sectionDisplay?.visible?.[sectionId] !== false;
+}
+
+function formatSectionChunk(config, lines) {
+  if (config.sectionDisplay?.mode !== "submenu" || lines.length < 2) {
+    return lines;
+  }
+
+  return [lines[0], ...lines.slice(1).map(indentSwiftBarMenuLine)];
+}
+
+function indentSwiftBarMenuLine(line) {
+  return line.startsWith("--") ? `--${line}` : `-- ${line}`;
 }
 
 function renderSection(config, result, options = {}) {
@@ -3261,10 +3387,12 @@ function renderFooter(config, doneStats, sprintStats, updateVersion) {
           ),
         ]
       : []),
-    lineWithParams(`측정 ${formatTime(new Date())} · ${version}`, [
-      sizeParam(style.sizes.footer),
-      colorParam(style.colors.dim),
-    ]),
+    lineWithParams(
+      `조회 ${formatTime(new Date())} · ${normalizePollIntervalMinutes(
+        config.pollIntervalMinutes,
+      )}분 주기 · ${version}`,
+      [sizeParam(style.sizes.footer), colorParam(style.colors.dim)],
+    ),
   ];
 }
 
@@ -3283,6 +3411,7 @@ function renderSprintFooterText(sprintStats) {
 
 function renderSettingsMenu(config) {
   const style = getStyle(config);
+  const sectionDisplay = normalizeSectionDisplay(config.sectionDisplay);
   const rows = [
     lineWithParams("⚙️ 위젯 설정", [
       sizeParam(style.sizes.footer),
@@ -3310,6 +3439,37 @@ function renderSettingsMenu(config) {
   const pushGroup = (label) => {
     rows.push(lineWithParams(`-- ${label}`, settingsStyleParams));
   };
+
+  pushGroup("🗂 티켓 영역");
+  pushSetting(
+    "----",
+    "펼쳐서 보기 (기본)",
+    sectionDisplay.mode === "expanded",
+    "sectionDisplay.mode",
+    "expanded",
+  );
+  pushSetting(
+    "----",
+    "접어서 보기 — 하위 메뉴",
+    sectionDisplay.mode === "submenu",
+    "sectionDisplay.mode",
+    "submenu",
+  );
+  rows.push(lineWithParams("---- — 표시할 영역 —", settingsStyleParams));
+  for (const [sectionId, fallbackLabel] of configurableSectionOptions) {
+    const visible = sectionDisplay.visible[sectionId];
+    const label =
+      sectionId === "stale"
+        ? fallbackLabel
+        : sectionTitle(config, sectionId, fallbackLabel);
+    pushSetting(
+      "----",
+      label,
+      visible,
+      `sectionDisplay.visible.${sectionId}`,
+      String(!visible),
+    );
+  }
 
   pushGroup("🎨 테마 프리셋");
   for (const [presetName, label] of [
@@ -3564,6 +3724,15 @@ function renderSettingsMenu(config) {
     [60, "길게 (60자)"],
     [80, "아주 길게 (80자)"],
   ]);
+  pushSizeSettings(
+    "Jira 조회 주기",
+    "pollIntervalMinutes",
+    config.pollIntervalMinutes,
+    pollIntervalMinuteOptions.map((minutes) => [
+      minutes,
+      `${minutes}분${minutes === defaultPollIntervalMinutes ? " (기본)" : ""}`,
+    ]),
+  );
   pushGroup("🔔 알림 및 업데이트");
   pushSetting(
     "--",
@@ -3774,10 +3943,7 @@ function readCache() {
     return null;
   }
 
-  let timestamp = 0;
-  try {
-    timestamp = Number(fs.readFileSync(getCacheTimestampPath(), "utf8").trim());
-  } catch {}
+  const timestamp = readTimestamp(getCacheTimestampPath());
 
   const ageMinutes =
     timestamp > 0
@@ -3785,14 +3951,76 @@ function readCache() {
       : "?";
   return {
     ageMinutes,
+    output,
+    timestamp,
     body: output.slice(markerIndex + marker.length),
   };
+}
+
+function readPollCache() {
+  let output;
+  try {
+    output = fs.readFileSync(getPollOutputPath(), "utf8").trim();
+  } catch {
+    return null;
+  }
+
+  if (!output || !output.includes("\n---\n")) {
+    return null;
+  }
+
+  return {
+    output,
+    timestamp: readTimestamp(getPollTimestampPath()),
+  };
+}
+
+function readTimestamp(filePath) {
+  try {
+    const timestamp = Number(fs.readFileSync(filePath, "utf8").trim());
+    return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function shouldReuseScheduledCache(
+  config,
+  cached,
+  now = Date.now(),
+  refreshReason = process.env.SWIFTBAR_PLUGIN_REFRESH_REASON,
+) {
+  const normalizedReason = String(refreshReason || "").trim().toLowerCase();
+  if (!automaticRefreshReasons.has(normalizedReason)) {
+    return false;
+  }
+
+  if (
+    !cached?.output ||
+    !Number.isFinite(cached.timestamp) ||
+    cached.timestamp <= 0
+  ) {
+    return false;
+  }
+
+  const ageMs = now - cached.timestamp;
+  return (
+    ageMs >= 0 &&
+    ageMs < normalizePollIntervalMinutes(config.pollIntervalMinutes) * 60000
+  );
 }
 
 function writeCache(output) {
   try {
     writePrivateText(getCacheOutputPath(), `${output}\n`);
     writePrivateText(getCacheTimestampPath(), String(Date.now()));
+  } catch {}
+}
+
+function writePollSnapshot(output, timestamp = Date.now()) {
+  try {
+    writePrivateTextAtomic(getPollOutputPath(), `${output}\n`);
+    writePrivateText(getPollTimestampPath(), String(timestamp));
   } catch {}
 }
 
@@ -4186,6 +4414,21 @@ async function main() {
   }
 
   const { config } = configResult;
+  const lastGoodCache = readCache();
+  const lastPollCache = readPollCache();
+  const lastPollTimestamp = readTimestamp(getPollTimestampPath());
+  const cachedOutput = lastPollCache || lastGoodCache;
+  const scheduledCache = cachedOutput
+    ? {
+        ...cachedOutput,
+        timestamp: lastPollTimestamp || cachedOutput.timestamp,
+      }
+    : null;
+  if (shouldReuseScheduledCache(config, scheduledCache)) {
+    process.stdout.write(`${scheduledCache.output}\n`);
+    return;
+  }
+
   const seen = readSeenStore();
   try {
     if (pruneSeenStore(seen) > 0) {
@@ -4250,6 +4493,8 @@ async function main() {
     });
     writeCache(output);
   }
+
+  writePollSnapshot(output);
 
   process.stdout.write(`${output}\n`);
 }

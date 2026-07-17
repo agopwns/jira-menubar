@@ -56,11 +56,11 @@ When run from a local clone, `./install.sh` installs the checked-out plugin inst
 | `baseUrl`                    | `https://your-site.atlassian.net`                                                                                                                                               |
 | `email`                      | Atlassian account email                                                                                                                                                         |
 | `apiToken`                   | API token (file is chmod 600)                                                                                                                                                   |
-| `myAccountId`                | Your Jira account ID. The installer discovers it automatically                                                                                                                 |
+| `myAccountId`                | Your Jira account ID. The installer discovers it automatically                                                                                                                  |
 | `boardId`                    | Jira board ID for the active-sprint footer. Empty by default (disabled); use the numeric ID from the board URL (`/boards/<id>`, or the `rapidView` parameter on classic boards) |
 | `projects`                   | Project keys for the "newly created" section, e.g. `["ABC", "XYZ"]`                                                                                                             |
 | `newTicketDays`              | Window for newly created tickets (default 3)                                                                                                                                    |
-| `pollIntervalMinutes`        | Jira query interval: `5`, `10`, `15`, `30`, or `60` minutes (default 5). Also editable from ⚙️ settings; manual refresh bypasses the interval cache                               |
+| `pollIntervalMinutes`        | Jira query interval: `5`, `10`, `15`, `30`, or `60` minutes (default 5). Also editable from ⚙️ settings; manual refresh bypasses the interval cache                             |
 | `sectionDisplay`             | Ticket-region layout: `mode` is `expanded` (default) or `submenu`; `visible` toggles the seven built-in regions. All options are available under ⚙️ settings                    |
 | `notifications` / `briefing` | Master toggles (default true)                                                                                                                                                   |
 | `updateCheck`                | Check GitHub for a newer plugin version at most once every 24 hours (default true)                                                                                              |
@@ -99,6 +99,31 @@ jira-tickets.5m.js briefing             # send the morning briefing now
 ```
 
 Notifications come from `osascript` — if you don't see them, allow **Script Editor** in System Settings → Notifications.
+
+## Terminal ticket dashboard (`bin/tickets`)
+
+A standalone terminal companion to the menu bar widget. It reuses the same `~/.config/jira-menubar/config.json` (no extra setup) and renders your open tickets as colored, sectioned tables: moved-by-others, urgent, in progress, testing, planned, and other/epics.
+
+Install: symlink it onto your PATH.
+
+```
+ln -sf "$(pwd)/bin/tickets" ~/.local/bin/tickets
+```
+
+Usage:
+
+```
+tickets                 # render once and exit
+tickets --watch [secs]  # live dashboard, re-fetch every N seconds (default 300)
+tickets -w 120          # same, 2-minute refresh
+tickets --project US    # filter to one project
+tickets --jql "priority = High"  # AND-append extra JQL
+tickets --help
+```
+
+Each row shows the ticket key, a priority glyph (`▲` high, `■` medium, `▽` low), the colored status, last-updated date, and summary. Local work markers appear next to the key when a git worktree of the fleet repo is checked out on a branch containing the ticket key: `●` worktree exists, `▶` a tmux pane is currently active inside it. Watch mode rescans local state on every refresh and survives fetch errors (keeps the last render with a retry countdown).
+
+To keep a dashboard always running in a `tickets` tmux session — auto-revived if killed and restarted at login — see `bin/tickets-watch-keepalive.sh` and the launchd example `bin/com.jun.tickets-watch.plist` (copy the plist to `~/Library/LaunchAgents` and `launchctl load` it; adjust the script path inside). Attach with `tmux attach -t tickets`.
 
 ---
 

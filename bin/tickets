@@ -1,0 +1,362 @@
+#!/usr/bin/env node
+
+const fs = require('fs')
+const os = require('os')
+const path = require('path')
+
+const CONFIG_PATH = path.join(os.homedir(), '.config', 'jira-menubar', 'config.json')
+
+const DEFAULT_BUCKETS = {
+  urgent: ['검토 중', 'dev request', 'Urgent', 'Blocker'],
+  inProgress: ['진행 중', 'In Progress'],
+  planned: ['계획 중', 'To Do', 'Backlog']
+}
+
+const RESET = '\x1b[0m'
+const BOLD = '\x1b[1m'
+const DIM = '\x1b[2m'
+const RED = '\x1b[31m'
+const YELLOW = '\x1b[33m'
+const CYAN = '\x1b[36m'
+
+function loadConfig () {
+  if (!fs.existsSync(CONFIG_PATH)) return null
+  try {
+    return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'))
+  } catch (e) {
+    return null
+  }
+}
+
+function printSetupHint () {
+  console.error('Jira config not found or apiToken missing.')
+  console.error(`Expected config at: ${CONFIG_PATH}`)
+  console.error('Required fields: baseUrl, email, apiToken')
+  console.error('Example:')
+  console.error(JSON.stringify({
+    baseUrl: 'https://your-team.atlassian.net',
+    email: 'you@example.com',
+    apiToken: '<atlassian api token>',
+    myAccountId: '<optional accountId>',
+    statusBuckets: { urgent: ['검토 중', 'dev request'], inProgress: ['진행 중'], planned: ['계획 중'] }
+  }, null, 2))
+}
+
+function parseArgs (argv) {
+  const args = { watch: false, interval: 300, jql: '', project: '', help: false }
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i]
+    if (a === '--help' || a === '-h') {
+      args.help = true
+    } else if (a === '--watch' || a === '-w') {
+      args.watch = true
+      const next = argv[i + 1]
+      if (next && /^\d+$/.test(next)) {
+        args.interval = parseInt(next, 10)
+        i++
+      }
+    } else if (a === '--jql') {
+      args.jql = argv[i + 1] || ''
+      i++
+    } else if (a === '--project') {
+      args.project = argv[i + 1] || ''
+      i++
+    }
+  }
+  return args
+}
+
+function printHelp () {
+  console.log(`tickets — show your assigned Jira tickets in the terminal
+
+Usage:
+  tickets                 Render once and exit
+  tickets --watch [secs]  Live watch mode, re-fetch every N seconds (default 300)
+  tickets -w [secs]       Same as --watch
+  tickets --jql "<extra>" AND-append extra JQL to the main query
+  tickets --project US    Shorthand for --jql "project = US"
+  tickets --help          Show this help
+
+Config: ${CONFIG_PATH}
+`)
+}
+
+function authHeader (config) {
+  const token = Buffer.from(`${config.email}:${config.apiToken}`).toString('base64')
+  return `Basic ${token}`
+}
+
+async function jiraSearch (config, jql, fields, maxResults) {
+  const headers = {
+    Authorization: authHeader(config),
+    'Content-Type': 'application/json',
+    Accept: 'application/json'
+  }
+  const body = JSON.stringify({ jql, fields, maxResults })
+
+  let res = await fetch(`${config.baseUrl}/rest/api/3/search/jql`, {
+    method: 'POST',
+    headers,
+    body
+  })
+
+  if (res.status === 404) {
+    res = await fetch(`${config.baseUrl}/rest/api/3/search`, {
+      method: 'POST',
+      headers,
+      body
+    })
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Jira API ${res.status}: ${text.slice(0, 200)}`)
+  }
+
+  const data = await res.json()
+  return data.issues || []
+}
+
+function buildMainJql (extraJql, project) {
+  let jql = 'assignee = currentUser() AND statusCategory != Done'
+  if (project) jql += ` AND project = ${project}`
+  if (extraJql) jql += ` AND (${extraJql})`
+  jql += ' ORDER BY priority DESC, updated DESC'
+  return jql
+}
+
+function buildMovedByOthersJql (myAccountId, project) {
+  let jql = `assignee = currentUser() AND statusCategory != Done AND updated >= -7d AND NOT issue IN updatedBy("${myAccountId}", "-7d")`
+  if (project) jql += ` AND project = ${project}`
+  jql += ' ORDER BY updated DESC'
+  return jql
+}
+
+async function fetchTickets (config, args) {
+  const fields = ['summary', 'status', 'priority', 'issuetype', 'updated', 'parent']
+  const mainJql = buildMainJql(args.jql, args.project)
+  const main = await jiraSearch(config, mainJql, fields, 100)
+
+  let movedByOthers = []
+  if (config.myAccountId) {
+    try {
+      const movedJql = buildMovedByOthersJql(config.myAccountId, args.project)
+      movedByOthers = await jiraSearch(config, movedJql, fields, 100)
+    } catch (e) {
+      // non-fatal, just skip section
+      movedByOthers = []
+    }
+  }
+
+  return { main, movedByOthers }
+}
+
+function priorityGlyph (issue) {
+  const name = issue.fields.priority && issue.fields.priority.name
+  if (name === 'Highest' || name === 'High') return `${RED}▲${RESET}`
+  if (name === 'Medium') return `${YELLOW}■${RESET}`
+  if (name === 'Low') return `${DIM}▽${RESET}`
+  return `${DIM}·${RESET}`
+}
+
+function statusColor (statusName) {
+  if (statusName === '진행 중' || statusName === 'In Progress') return YELLOW
+  if (statusName === '테스트') return CYAN
+  if (statusName === '검토 중') return RED
+  return DIM
+}
+
+function fmtDate (iso) {
+  if (!iso) return '     '
+  const d = new Date(iso)
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  return `${mm}-${dd}`
+}
+
+function pad (str, len) {
+  const s = String(str)
+  if (s.length >= len) return s
+  return s + ' '.repeat(len - s.length)
+}
+
+function isEpic (issue) {
+  const t = issue.fields.issuetype && issue.fields.issuetype.name
+  return t === 'Epic' || t === '에픽'
+}
+
+function renderTable (issues, cols) {
+  const lines = []
+  for (const issue of issues) {
+    const key = `${BOLD}${pad(issue.key, 9)}${RESET}`
+    const glyph = priorityGlyph(issue)
+    const statusName = (issue.fields.status && issue.fields.status.name) || ''
+    const color = statusColor(statusName)
+    const status = `${color}${pad(statusName, 10)}${RESET}`
+    const updated = fmtDate(issue.fields.updated)
+    const prefix = `${key} ${glyph} ${status} ${updated} `
+    const prefixLen = 9 + 1 + 1 + 1 + 10 + 1 + 5 + 1
+    const maxSummaryLen = Math.max(10, cols - prefixLen)
+    let summary = issue.fields.summary || ''
+    if (summary.length > maxSummaryLen) {
+      summary = summary.slice(0, maxSummaryLen - 1) + '…'
+    }
+    lines.push(prefix + summary)
+  }
+  return lines
+}
+
+function renderSection (title, issues, cols) {
+  if (!issues.length) return ''
+  let out = `\n${BOLD}${title}${RESET} (${issues.length})\n`
+  out += renderTable(issues, cols).join('\n') + '\n'
+  return out
+}
+
+function statusMatches (issue, bucket) {
+  const name = (issue.fields.status && issue.fields.status.name) || ''
+  return bucket.includes(name)
+}
+
+function classify (issues, buckets) {
+  const urgent = []
+  const inProgress = []
+  const testing = []
+  const planned = []
+  const other = []
+  const seen = new Set()
+
+  for (const issue of issues) {
+    if (statusMatches(issue, buckets.urgent)) {
+      urgent.push(issue)
+      seen.add(issue.key)
+    }
+  }
+  for (const issue of issues) {
+    if (seen.has(issue.key)) continue
+    if (statusMatches(issue, buckets.inProgress)) {
+      inProgress.push(issue)
+      seen.add(issue.key)
+    }
+  }
+  for (const issue of issues) {
+    if (seen.has(issue.key)) continue
+    const name = (issue.fields.status && issue.fields.status.name) || ''
+    if (name === '테스트') {
+      testing.push(issue)
+      seen.add(issue.key)
+    }
+  }
+  for (const issue of issues) {
+    if (seen.has(issue.key)) continue
+    if (statusMatches(issue, buckets.planned)) {
+      planned.push(issue)
+      seen.add(issue.key)
+    }
+  }
+  for (const issue of issues) {
+    if (seen.has(issue.key)) continue
+    other.push(issue)
+  }
+
+  planned.sort((a, b) => {
+    const pa = a.fields.priority && a.fields.priority.name === 'High' ? 0 : 1
+    const pb = b.fields.priority && b.fields.priority.name === 'High' ? 0 : 1
+    return pa - pb
+  })
+
+  other.sort((a, b) => {
+    const ea = isEpic(a) ? 1 : 0
+    const eb = isEpic(b) ? 1 : 0
+    return ea - eb
+  })
+
+  return { urgent, inProgress, testing, planned, other }
+}
+
+function render (result, config, args) {
+  const cols = process.stdout.columns || 120
+  const buckets = Object.assign({}, DEFAULT_BUCKETS, config.statusBuckets || {})
+  const { main, movedByOthers } = result
+  const { urgent, inProgress, testing, planned, other } = classify(main, buckets)
+
+  const now = new Date()
+  const timeStr = now.toTimeString().slice(0, 8)
+
+  let out = ''
+  if (args.watch) out += '\x1b[2J\x1b[H'
+  out += `${BOLD}Jira${RESET} — ${main.length} open tickets · updated ${timeStr}`
+  if (args.watch) out += `${DIM} (refresh every ${args.interval}s)${RESET}`
+  out += '\n'
+
+  out += renderSection('🔔 남이 움직인', movedByOthers, cols)
+  out += renderSection('🔥 즉시', urgent, cols)
+  out += renderSection('🚧 진행 중', inProgress, cols)
+  out += renderSection('🧪 테스트', testing, cols)
+  out += renderSection('📋 계획 중', planned, cols)
+  out += renderSection('📦 기타/에픽', other, cols)
+
+  console.log(out)
+}
+
+async function runOnce (config, args) {
+  const result = await fetchTickets(config, args)
+  render(result, config, args)
+}
+
+async function runWatch (config, args) {
+  let lastResult = null
+  let stopped = false
+
+  process.on('SIGINT', () => {
+    stopped = true
+    console.log(`\n${DIM}Stopped.${RESET}`)
+    process.exit(0)
+  })
+
+  async function tick () {
+    if (stopped) return
+    try {
+      lastResult = await fetchTickets(config, args)
+      render(lastResult, config, args)
+    } catch (e) {
+      if (lastResult) {
+        render(lastResult, config, args)
+      } else {
+        console.log(`\x1b[2J\x1b[H${BOLD}Jira${RESET} — waiting for data...`)
+      }
+      console.log(`${DIM}[error] ${e.message} — retrying in ${args.interval}s${RESET}`)
+    }
+    if (!stopped) setTimeout(tick, args.interval * 1000)
+  }
+
+  await tick()
+}
+
+async function main () {
+  const args = parseArgs(process.argv.slice(2))
+
+  if (args.help) {
+    printHelp()
+    process.exit(0)
+  }
+
+  const config = loadConfig()
+  if (!config || !config.apiToken) {
+    printSetupHint()
+    process.exit(1)
+  }
+
+  try {
+    if (args.watch) {
+      await runWatch(config, args)
+    } else {
+      await runOnce(config, args)
+    }
+  } catch (e) {
+    console.error(`${RED}Error: ${e.message}${RESET}`)
+    process.exit(1)
+  }
+}
+
+main()

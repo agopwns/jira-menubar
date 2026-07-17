@@ -3,8 +3,12 @@
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
+const { execSync } = require('child_process')
 
 const CONFIG_PATH = path.join(os.homedir(), '.config', 'jira-menubar', 'config.json')
+const FLEET_REPO_PATH = '/Users/korelijun/Desktop/Local Code/hermont-fleet-manager'
+
+const GREEN = '\x1b[32m'
 
 const DEFAULT_BUCKETS = {
   urgent: ['검토 중', 'dev request', 'Urgent', 'Blocker'],
@@ -151,6 +155,73 @@ async function fetchTickets (config, args) {
   return { main, movedByOthers }
 }
 
+function extractTicketKey (branchName) {
+  if (!branchName) return null
+  const m = branchName.match(/\b(us|hs|qa)-?(\d+)\b/i)
+  if (!m) return null
+  return `${m[1].toUpperCase()}-${m[2]}`
+}
+
+function getWorktreeMap () {
+  const map = {}
+  let output = ''
+  try {
+    output = execSync('git worktree list --porcelain', {
+      cwd: FLEET_REPO_PATH,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch (e) {
+    return map
+  }
+
+  let currentPath = null
+  for (const line of output.split('\n')) {
+    if (line.startsWith('worktree ')) {
+      currentPath = line.slice('worktree '.length).trim()
+    } else if (line.startsWith('branch ')) {
+      const branchRef = line.slice('branch '.length).trim()
+      const branchName = branchRef.replace(/^refs\/heads\//, '')
+      const key = extractTicketKey(branchName)
+      if (key && currentPath) map[key] = currentPath
+    }
+  }
+  return map
+}
+
+function getActiveTmuxPaths () {
+  let output = ''
+  try {
+    output = execSync("tmux list-panes -a -F '#{pane_current_path}'", {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+  } catch (e) {
+    return []
+  }
+  return output.split('\n').map(l => l.trim()).filter(Boolean)
+}
+
+function getLocalWorkInfo () {
+  const worktreeMap = getWorktreeMap()
+  const tmuxPaths = getActiveTmuxPaths()
+
+  const activeKeys = new Set()
+  for (const [key, worktreePath] of Object.entries(worktreeMap)) {
+    const isActive = tmuxPaths.some(p => p === worktreePath || p.startsWith(worktreePath + '/'))
+    if (isActive) activeKeys.add(key)
+  }
+
+  return { worktreeMap, activeKeys }
+}
+
+function localMarker (issue, localInfo) {
+  if (!localInfo) return ' '
+  if (localInfo.activeKeys.has(issue.key)) return `${GREEN}${BOLD}▶${RESET}`
+  if (localInfo.worktreeMap[issue.key]) return `${GREEN}●${RESET}`
+  return ' '
+}
+
 function priorityGlyph (issue) {
   const name = issue.fields.priority && issue.fields.priority.name
   if (name === 'Highest' || name === 'High') return `${RED}▲${RESET}`
@@ -185,17 +256,18 @@ function isEpic (issue) {
   return t === 'Epic' || t === '에픽'
 }
 
-function renderTable (issues, cols) {
+function renderTable (issues, cols, localInfo) {
   const lines = []
   for (const issue of issues) {
     const key = `${BOLD}${pad(issue.key, 9)}${RESET}`
+    const marker = localMarker(issue, localInfo)
     const glyph = priorityGlyph(issue)
     const statusName = (issue.fields.status && issue.fields.status.name) || ''
     const color = statusColor(statusName)
     const status = `${color}${pad(statusName, 10)}${RESET}`
     const updated = fmtDate(issue.fields.updated)
-    const prefix = `${key} ${glyph} ${status} ${updated} `
-    const prefixLen = 9 + 1 + 1 + 1 + 10 + 1 + 5 + 1
+    const prefix = `${key} ${marker} ${glyph} ${status} ${updated} `
+    const prefixLen = 9 + 1 + 1 + 1 + 1 + 1 + 10 + 1 + 5 + 1
     const maxSummaryLen = Math.max(10, cols - prefixLen)
     let summary = issue.fields.summary || ''
     if (summary.length > maxSummaryLen) {
@@ -206,11 +278,15 @@ function renderTable (issues, cols) {
   return lines
 }
 
-function renderSection (title, issues, cols) {
+function renderSection (title, issues, cols, localInfo) {
   if (!issues.length) return ''
   let out = `\n${BOLD}${title}${RESET} (${issues.length})\n`
-  out += renderTable(issues, cols).join('\n') + '\n'
+  out += renderTable(issues, cols, localInfo).join('\n') + '\n'
   return out
+}
+
+function hasAnyMarker (allIssues, localInfo) {
+  return allIssues.some(issue => localInfo.activeKeys.has(issue.key) || localInfo.worktreeMap[issue.key])
 }
 
 function statusMatches (issue, bucket) {
@@ -279,6 +355,7 @@ function render (result, config, args) {
   const buckets = Object.assign({}, DEFAULT_BUCKETS, config.statusBuckets || {})
   const { main, movedByOthers } = result
   const { urgent, inProgress, testing, planned, other } = classify(main, buckets)
+  const localInfo = getLocalWorkInfo()
 
   const now = new Date()
   const timeStr = now.toTimeString().slice(0, 8)
@@ -289,12 +366,17 @@ function render (result, config, args) {
   if (args.watch) out += `${DIM} (refresh every ${args.interval}s)${RESET}`
   out += '\n'
 
-  out += renderSection('🔔 남이 움직인', movedByOthers, cols)
-  out += renderSection('🔥 즉시', urgent, cols)
-  out += renderSection('🚧 진행 중', inProgress, cols)
-  out += renderSection('🧪 테스트', testing, cols)
-  out += renderSection('📋 계획 중', planned, cols)
-  out += renderSection('📦 기타/에픽', other, cols)
+  out += renderSection('🔔 남이 움직인', movedByOthers, cols, localInfo)
+  out += renderSection('🔥 즉시', urgent, cols, localInfo)
+  out += renderSection('🚧 진행 중', inProgress, cols, localInfo)
+  out += renderSection('🧪 테스트', testing, cols, localInfo)
+  out += renderSection('📋 계획 중', planned, cols, localInfo)
+  out += renderSection('📦 기타/에픽', other, cols, localInfo)
+
+  const allIssues = movedByOthers.concat(main)
+  if (hasAnyMarker(allIssues, localInfo)) {
+    out += `\n${DIM}● worktree  ▶ tmux 작업 중${RESET}\n`
+  }
 
   console.log(out)
 }
